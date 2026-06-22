@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Owed</title>
+  <script>
+    // GitHub Pages SPA redirect fix
+    // Captures the full URL including auth tokens and redirects to index.html
+    const url = window.location.href;
+    const search = window.location.search;
+    const hash = window.location.hash;
+    
+    // Store the path so index.html can pick it up
+    sessionStorage.setItem('spa_redirect', search + hash);
+    
+    // Redirect to root
+    window.location.replace(
+      window.location.origin + '/schulden-app/' +
+      (search ? '?' + search.slice(1) : '') +
+      hash
+    );
+  </script>
+</head>
+<body style="background:#0A0A0F;color:#A78BFA;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;">
+  <div style="font-size:32px;font-weight:800;">Owed</div>
+  <div style="font-size:14px;color:#8A8A9A;">Redirecting…</div>
+</body>
+</html>

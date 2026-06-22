@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Owed" />
+  <meta name="theme-color" content="#0A0A0F" />
+  <title>Owed</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    /* ── Reset & tokens ───────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    :root {
+      --bg:        #0A0A0F;
+      --surface:   #141418;
+      --card:      #1C1C22;
+      --border:    #2A2A32;
+      --accent:    #A78BFA;
+      --accent-d:  #6D56C2;
+      --green:     #34D399;
+      --red:       #F87171;
+      --amber:     #FBBF24;
+      --t1:        #F0EFF5;
+      --t2:        #8A8A9A;
+      --t3:        #55555F;
+      --radius:    16px;
+      --safe-top:    env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--t1); font-family: -apple-system, 'SF Pro Text', 'Inter', sans-serif; overflow: hidden; }
+
+    /* ── Layout ───────────────────────────────────── */
+    #app { display: flex; flex-direction: column; height: 100%; padding-top: var(--safe-top); }
+    .screen { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+    .screen.active { display: flex; }
+    .scroll-area { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px 16px calc(80px + var(--safe-bottom)); }
+
+    /* ── Tab bar ──────────────────────────────────── */
+    .tab-bar {
+      display: flex; background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding-bottom: var(--safe-bottom);
+      flex-shrink: 0;
+    }
+    .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 0 8px; cursor: pointer; }
+    .tab-icon { font-size: 22px; }
+    .tab-label { font-size: 10px; font-weight: 500; color: var(--t3); }
+    .tab-item.active .tab-label { color: var(--accent); }
+
+    /* ── Typography ───────────────────────────────── */
+    .eyebrow { font-size: 11px; font-weight: 600; color: var(--t2); letter-spacing: .08em; text-transform: uppercase; }
+    .page-title { font-size: 28px; font-weight: 700; color: var(--t1); letter-spacing: -.5px; margin-top: 2px; margin-bottom: 16px; }
+    .section-label { font-size: 11px; font-weight: 600; color: var(--t2); letter-spacing: .07em; text-transform: uppercase; margin-bottom: 10px; }
+
+    /* ── Cards ────────────────────────────────────── */
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 10px; }
+    .summary-card {
+      background: linear-gradient(135deg, #6D56C222, #A78BFA11);
+      border: 1px solid #A78BFA33;
+      border-radius: var(--radius); padding: 20px; margin-bottom: 20px;
+    }
+    .summary-label { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .08em; text-transform: uppercase; }
+    .summary-amount { font-size: 40px; font-weight: 700; letter-spacing: -1.5px; margin: 4px 0 16px; }
+    .summary-split { display: flex; gap: 20px; flex-wrap: wrap; }
+    .split-item { display: flex; flex-direction: column; gap: 2px; }
+    .split-lbl { font-size: 11px; color: var(--t2); }
+    .split-val { font-size: 15px; font-weight: 600; }
+
+    /* ── Toggle ───────────────────────────────────── */
+    .toggle-row { display: flex; background: var(--surface); border-radius: 12px; padding: 3px; margin-bottom: 16px; }
+    .toggle-btn { flex: 1; padding: 7px; border-radius: 9px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; background: transparent; color: var(--t2); }
+    .toggle-btn.active { background: var(--card); color: var(--t1); box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+
+    /* ── Debt card ────────────────────────────────── */
+    .debt-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+    .debt-title { font-size: 15px; font-weight: 600; }
+    .debt-date { font-size: 11px; color: var(--t3); margin-top: 2px; }
+    .debt-amount { font-size: 18px; font-weight: 700; color: var(--red); text-align: right; }
+    .debt-amount.settled { color: var(--green); }
+    .debt-amount-sub { font-size: 10px; color: var(--t3); text-align: right; }
+    .progress-bg { background: var(--border); border-radius: 4px; height: 4px; margin-bottom: 8px; }
+    .progress-fill { height: 4px; border-radius: 4px; background: linear-gradient(90deg, var(--accent-d), var(--accent)); }
+    .debt-footer { display: flex; justify-content: space-between; align-items: center; }
+    .tag { font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; }
+    .tag-open { background: #F8717122; color: var(--red); }
+    .tag-partial { background: #A78BFA22; color: var(--accent); }
+    .tag-done { background: #34D39922; color: var(--green); }
+    .tag-recurring { background: #FBBF2422; color: var(--amber); margin-left: 4px; }
+
+    /* ── Year bars ────────────────────────────────── */
+    .year-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .year-month { font-size: 12px; font-weight: 500; color: var(--t2); width: 28px; flex-shrink: 0; }
+    .year-track { flex: 1; background: var(--surface); border-radius: 6px; height: 28px; overflow: hidden; }
+    .year-fill { height: 100%; border-radius: 6px; display: flex; align-items: center; padding-left: 8px; }
+    .year-fill.open { background: linear-gradient(90deg, var(--accent-d), var(--accent)); }
+    .year-fill.paid { background: linear-gradient(90deg, #22c97a, var(--green)); }
+    .year-fill-label { font-size: 11px; font-weight: 600; color: #fff; }
+    .year-amount { font-size: 12px; font-weight: 600; color: var(--t2); width: 64px; text-align: right; flex-shrink: 0; }
+
+    /* ── Forms ────────────────────────────────────── */
+    .form-field { margin-bottom: 14px; }
+    .form-label { font-size: 11px; font-weight: 600; color: var(--t2); letter-spacing: .07em; text-transform: uppercase; margin-bottom: 6px; display: block; }
+    .form-input {
+      width: 100%; background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 13px 14px; color: var(--t1);
+      font-size: 16px; font-family: inherit; outline: none;
+      -webkit-appearance: none;
+    }
+    .form-input:focus { border-color: #A78BFA88; }
+    .form-hint { font-size: 11px; color: var(--t3); margin-top: 4px; }
+    .form-row { display: flex; gap: 10px; }
+    .form-row .form-field { flex: 1; }
+    .pill-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); font-size: 13px; font-weight: 500; cursor: pointer; background: transparent; color: var(--t2); font-family: inherit; }
+    .pill.active { background: #A78BFA22; border-color: #A78BFA66; color: var(--accent); }
+    .pill.active-green { background: #34D39922; border-color: #34D39966; color: var(--green); }
+
+    /* ── Split buttons ────────────────────────────── */
+    .split-toggle { display: flex; gap: 10px; margin-bottom: 12px; }
+    .split-btn { flex: 1; border-radius: 14px; border: 1.5px solid var(--border); padding: 14px 10px; cursor: pointer; background: var(--card); text-align: center; font-family: inherit; }
+    .split-btn.active-full { border-color: var(--accent); background: #A78BFA11; }
+    .split-btn.active-split { border-color: var(--green); background: #34D39911; }
+    .split-btn-icon { font-size: 22px; margin-bottom: 4px; }
+    .split-btn-label { font-size: 13px; font-weight: 700; }
+    .split-btn-sub { font-size: 10px; margin-top: 2px; }
+
+    /* ── iOS toggle ───────────────────────────────── */
+    .ios-toggle { width: 50px; height: 30px; border-radius: 15px; position: relative; cursor: pointer; flex-shrink: 0; transition: background .2s; }
+    .ios-toggle.on { background: var(--accent); }
+    .ios-toggle.off { background: var(--border); }
+    .ios-thumb { width: 26px; height: 26px; border-radius: 13px; background: #fff; position: absolute; top: 2px; transition: left .2s; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+    .ios-toggle.on .ios-thumb { left: 22px; }
+    .ios-toggle.off .ios-thumb { left: 2px; }
+
+    /* ── Buttons ──────────────────────────────────── */
+    .btn-primary { width: 100%; padding: 15px; border-radius: 14px; border: none; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; font-family: inherit; box-shadow: 0 4px 16px #A78BFA44; }
+    .btn-secondary { width: 100%; padding: 15px; border-radius: 14px; border: 1px solid var(--border); background: transparent; color: var(--t2); font-size: 15px; font-weight: 500; cursor: pointer; font-family: inherit; margin-top: 8px; }
+    .btn-danger { background: var(--red); box-shadow: 0 4px 16px #F8717144; }
+    .fab { position: fixed; bottom: calc(70px + var(--safe-bottom)); right: 20px; width: 52px; height: 52px; border-radius: 16px; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 26px; color: #fff; box-shadow: 0 4px 20px #A78BFA55; cursor: pointer; border: none; z-index: 100; }
+
+    /* ── Info note ────────────────────────────────── */
+    .info-note { background: #A78BFA11; border: 1px solid #A78BFA22; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; font-size: 12px; color: var(--accent); }
+    .info-note.green { background: #34D39911; border-color: #34D39922; color: var(--green); }
+
+    /* ── Back button ──────────────────────────────── */
+    .back-btn { display: flex; align-items: center; gap: 4px; font-size: 15px; color: var(--accent); cursor: pointer; margin-bottom: 8px; background: none; border: none; font-family: inherit; padding: 0; }
+
+    /* ── Timeline ─────────────────────────────────── */
+    .timeline-item { display: flex; gap: 12px; margin-bottom: 14px; }
+    .timeline-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+    .timeline-content { flex: 1; }
+    .timeline-title { font-size: 14px; font-weight: 600; }
+    .timeline-sub { font-size: 12px; color: var(--t2); margin-top: 2px; }
+
+    /* ── Breakdown grid ───────────────────────────── */
+    .breakdown-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+    .breakdown-cell { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+    .breakdown-cell-label { font-size: 10px; font-weight: 600; color: var(--t2); letter-spacing: .07em; text-transform: uppercase; margin-bottom: 4px; }
+    .breakdown-cell-val { font-size: 20px; font-weight: 700; letter-spacing: -.5px; }
+
+    /* ── History ──────────────────────────────────── */
+    .history-year { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+    .history-year-header { padding: 16px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+    .history-month-header { padding: 11px 16px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; border-top: 1px solid var(--border); }
+    .history-debt-row { padding: 9px 16px 9px 36px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #2A2A3222; }
+    .chevron { color: var(--t3); font-size: 14px; margin-left: 8px; }
+
+    /* ── Allocation preview ───────────────────────── */
+    .alloc-preview { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 14px; }
+    .alloc-header { padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+    .alloc-row { padding: 10px 16px; border-top: 1px solid var(--border); }
+    .alloc-row-header { display: flex; justify-content: space-between; margin-bottom: 6px; }
+    .alloc-pills { display: flex; gap: 12px; }
+    .alloc-pill { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--t2); }
+    .alloc-dot { width: 6px; height: 6px; border-radius: 3px; }
+
+    /* ── Auth screen ──────────────────────────────── */
+    #auth-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; padding: 32px; gap: 24px; }
+    .auth-logo { font-size: 56px; font-weight: 800; color: var(--accent); letter-spacing: -2px; }
+    .auth-tagline { font-size: 16px; color: var(--t2); text-align: center; }
+    .auth-form { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 12px; }
+
+    /* ── Loading ──────────────────────────────────── */
+    #loading { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 999; flex-direction: column; gap: 12px; }
+    .spinner { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast ────────────────────────────────────── */
+    #toast { position: fixed; bottom: calc(90px + var(--safe-bottom)); left: 50%; transform: translateX(-50%) translateY(20px); background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 18px; font-size: 14px; color: var(--t1); opacity: 0; transition: all .3s; z-index: 200; white-space: nowrap; pointer-events: none; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── Modal ────────────────────────────────────── */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 300; display: flex; align-items: flex-end; }
+    .modal { background: var(--surface); border-radius: 24px 24px 0 0; padding: 20px 20px calc(20px + var(--safe-bottom)); width: 100%; max-height: 90vh; overflow-y: auto; }
+    .modal-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 0 auto 20px; }
+    .modal-title { font-size: 20px; font-weight: 700; margin-bottom: 20px; }
+
+    /* ── Misc ─────────────────────────────────────── */
+    .flex-between { display: flex; justify-content: space-between; align-items: center; }
+    .mt8 { margin-top: 8px; }
+    .mt16 { margin-top: 16px; }
+    .mb0 { margin-bottom: 0; }
+    .text-accent { color: var(--accent); }
+    .text-green { color: var(--green); }
+    .text-red { color: var(--red); }
+    .text-dim { color: var(--t3); }
+    .fw700 { font-weight: 700; }
+    .fs13 { font-size: 13px; }
+    .fs11 { font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<div id="loading">
+  <div style="font-size:32px;font-weight:800;color:#A78BFA;letter-spacing:-1px;">Owed</div>
+  <div class="spinner"></div>
+</div>
+
+<div id="toast"></div>
+
+<div id="app" style="display:none;">
+
+  <!-- ── Auth ─────────────────────────────── -->
+  <div id="auth-screen" style="display:none;">
+    <div class="auth-logo">Owed</div>
+    <div class="auth-tagline">Track what's owed, effortlessly.</div>
+    <div class="auth-form">
+      <div class="form-field">
+        <label class="form-label">Your email</label>
+        <input id="auth-email" class="form-input" type="email" placeholder="you@example.com" inputmode="email" autocomplete="email" />
+      </div>
+      <button class="btn-primary" id="auth-btn" onclick="sendMagicLink()">Send magic link</button>
+      <div id="auth-msg" style="font-size:13px;color:var(--t2);text-align:center;display:none;"></div>
+    </div>
+  </div>
+
+  <!-- ── Main app ──────────────────────────── -->
+  <div id="main-app" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
+
+    <!-- DASHBOARD -->
+    <div class="screen active" id="screen-dashboard">
+      <div class="scroll-area" id="dashboard-scroll">
+        <div class="eyebrow" id="dash-eyebrow">June 2025</div>
+        <div class="page-title">Overview</div>
+        <div class="toggle-row">
+          <button class="toggle-btn active" id="toggle-month" onclick="setDashView('month')">Month</button>
+          <button class="toggle-btn" id="toggle-year" onclick="setDashView('year')">Year</button>
+        </div>
+        <div id="dash-content"></div>
+      </div>
+      <button class="fab" onclick="openModal('add-debt')">+</button>
+    </div>
+
+    <!-- DEBTS LIST -->
+    <div class="screen" id="screen-debts">
+      <div class="scroll-area">
+        <div class="eyebrow">All debts</div>
+        <div class="page-title">Debts</div>
+        <div id="debts-list"></div>
+      </div>
+      <button class="fab" onclick="openModal('add-debt')">+</button>
+    </div>
+
+    <!-- PAYMENTS -->
+    <div class="screen" id="screen-payments">
+      <div class="scroll-area">
+        <div class="eyebrow">Transfers</div>
+        <div class="page-title">Payments</div>
+        <div id="payments-list"></div>
+      </div>
+      <button class="fab" onclick="openModal('add-payment')">+</button>
+    </div>
+
+    <!-- HISTORY -->
+    <div class="screen" id="screen-history">
+      <div class="scroll-area">
+        <div class="eyebrow">All time</div>
+        <div class="page-title">History</div>
+        <div id="history-content"></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="screen" id="screen-settings">
+      <div class="scroll-area">
+        <div class="eyebrow">Preferences</div>
+        <div class="page-title">Settings</div>
+        <div id="settings-content"></div>
+      </div>
+    </div>
+
+    <!-- TAB BAR -->
+    <div class="tab-bar" id="tab-bar">
+      <div class="tab-item active" onclick="switchTab('dashboard')">
+        <span class="tab-icon">🏠</span><span class="tab-label">Overview</span>
+      </div>
+      <div class="tab-item" onclick="switchTab('debts')">
+        <span class="tab-icon">📋</span><span class="tab-label">Debts</span>
+      </div>
+      <div class="tab-item" onclick="switchTab('payments')">
+        <span class="tab-icon">💳</span><span class="tab-label">Payments</span>
+      </div>
+      <div class="tab-item" onclick="switchTab('history')">
+        <span class="tab-icon">📅</span><span class="tab-label">History</span>
+      </div>
+      <div class="tab-item" onclick="switchTab('settings')">
+        <span class="tab-icon">⚙️</span><span class="tab-label">Settings</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Modals ────────────────────────────────── -->
+<div id="modal-container"></div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const SUPABASE_URL = 'https://qizqfbdjyglyhucjkthi.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpenFmYmRqeWdseWh1Y2prdGhpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4NzI5MTQsImV4cCI6MjA5NzQ0ODkxNH0.jvu91aXhpIrwEn8SafhhHNd6KaBsrzexXEU97-D2DKA';
+const DEFAULT_RATE = 0.06;
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
+
+// ============================================================
+// STATE
+// ============================================================
+let state = {
+  user: null,
+  profile: null,
+  debts: [],
+  payments: [],
+  allocations: [],
+  dashView: 'month',
+  currentMonth: new Date().getMonth(),
+  currentYear: new Date().getFullYear(),
+  expandedYears: new Set(),
+  expandedMonths: new Set(),
+};
+
+// ============================================================
+// INIT
+// ============================================================
+async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    state.user = session.user;
+    await loadProfile();
+    await loadData();
+    showApp();
+  } else {
+    showAuth();
+  }
+  document.getElementById('loading').style.display = 'none';
+}
+
+async function loadProfile() {
+  const { data } = await sb.from('profiles').select('*').eq('id', state.user.id).single();
+  state.profile = data;
+}
+
+async function loadData() {
+  const [debtsRes, paymentsRes, allocRes] = await Promise.all([
+    sb.from('debts').select('*').order('date', { ascending: true }),
+    sb.from('payments').select('*').order('date', { ascending: false }),
+    sb.from('payment_allocations').select('*'),
+  ]);
+  state.debts = debtsRes.data || [];
+  state.payments = paymentsRes.data || [];
+  state.allocations = allocRes.data || [];
+  renderAll();
+}
+
+// ============================================================
+// AUTH
+// ============================================================
+async function sendMagicLink() {
+  const email = document.getElementById('auth-email').value.trim().toLowerCase();
+  if (!email) return showToast('Please enter your email');
+  document.getElementById('auth-btn').textContent = 'Sending…';
+  // shouldCreateUser: false means only pre-approved emails get a magic link
+  const { error } = await sb.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: false,
+      emailRedirectTo: 'https://nadiashffl.github.io/schulden-app/',
+    }
+  });
+  document.getElementById('auth-btn').textContent = 'Send magic link';
+  const msg = document.getElementById('auth-msg');
+  msg.style.display = 'block';
+  msg.textContent = error ? `Error: ${error.message}` : '✉️ Check your email for the magic link!';
+}
+
+sb.auth.onAuthStateChange(async (event, session) => {
+  if (event === 'SIGNED_IN' && session) {
+    state.user = session.user;
+    await ensureProfile();
+    await loadData();
+    showApp();
+  } else if (event === 'SIGNED_OUT') {
+    state.user = null;
+    state.profile = null;
+    showAuth();
+  }
+});
+
+async function ensureProfile() {
+  const { data } = await sb.from('profiles').select('*').eq('id', state.user.id).single();
+  if (!data) {
+    // First login: determine role by email
+    const isNadia = state.user.email?.toLowerCase().includes('nadia');
+    await sb.from('profiles').insert({
+      id: state.user.id,
+      name: isNadia ? 'Nadia' : 'Ingmar',
+      role: isNadia ? 'admin' : 'user',
+    });
+    await loadProfile();
+  } else {
+    state.profile = data;
+  }
+}
+
+function showAuth() {
+  document.getElementById("app").style.display = "flex";
+  document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('main-app').style.display = 'none';
+}
+
+function showApp() {
+  document.getElementById("app").style.display = "flex";
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('main-app').style.display = 'flex';
+  renderAll();
+}
+
+// ============================================================
+// INTEREST CALCULATION
+// ============================================================
+function calcAccruedInterest(debt, asOfDate = new Date()) {
+  if (!debt.applies_interest) return 0;
+  const start = new Date(debt.date);
+  const days = Math.max(0, Math.floor((asOfDate - start) / 86400000));
+  const paid = state.allocations
+    .filter(a => a.debt_id === debt.id)
+    .reduce((s, a) => s + Number(a.capital_paid), 0);
+  const remaining = Number(debt.amount) - paid;
+  if (remaining <= 0) return 0;
+  return Math.max(0, Math.round(remaining * Number(debt.interest_rate) / 365 * days * 100) / 100);
+}
+
+function calcRemainingCapital(debt) {
+  const paid = state.allocations
+    .filter(a => a.debt_id === debt.id)
+    .reduce((s, a) => s + Number(a.capital_paid), 0);
+  return Math.max(0, Number(debt.amount) - paid);
+}
+
+function calcTotalInterestPaid(debt) {
+  return state.allocations
+    .filter(a => a.debt_id === debt.id)
+    .reduce((s, a) => s + Number(a.interest_paid), 0);
+}
+
+function isSettled(debt) {
+  return calcRemainingCapital(debt) <= 0;
+}
+
+// ============================================================
+// PAYMENT ALLOCATION LOGIC
+// ============================================================
+function simulateAllocation(amount, payer) {
+  // Get open debts for this payer as debtor, sorted oldest first
+  const openDebts = state.debts
+    .filter(d => d.debtor === payer && !isSettled(d) && !d.is_template)
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  let remaining = amount;
+  const allocations = [];
+
+  for (const debt of openDebts) {
+    if (remaining <= 0) break;
+    const interest = calcAccruedInterest(debt);
+    const capital = calcRemainingCapital(debt);
+    const entry = { debt, interestPaid: 0, capitalPaid: 0 };
+
+    // First: pay interest
+    const iPay = Math.min(remaining, interest);
+    entry.interestPaid = Math.round(iPay * 100) / 100;
+    remaining = Math.round((remaining - iPay) * 100) / 100;
+
+    // Then: pay capital
+    if (remaining > 0) {
+      const cPay = Math.min(remaining, capital);
+      entry.capitalPaid = Math.round(cPay * 100) / 100;
+      remaining = Math.round((remaining - cPay) * 100) / 100;
+    }
+
+    if (entry.interestPaid > 0 || entry.capitalPaid > 0) allocations.push(entry);
+  }
+
+  return { allocations, surplus: Math.round(remaining * 100) / 100 };
+}
+
+// ============================================================
+// RENDER: DASHBOARD
+// ============================================================
+function setDashView(view) {
+  state.dashView = view;
+  document.getElementById('toggle-month').classList.toggle('active', view === 'month');
+  document.getElementById('toggle-year').classList.toggle('active', view === 'year');
+  renderDashboard();
+}
+
+function renderDashboard() {
+  const el = document.getElementById('dash-content');
+  if (state.dashView === 'month') renderDashMonth(el);
+  else renderDashYear(el);
+}
+
+function renderDashMonth(el) {
+  const now = new Date();
+  const m = state.currentMonth;
+  const y = state.currentYear;
+  const monthName = new Date(y, m).toLocaleString('en', { month: 'long' });
+  document.getElementById('dash-eyebrow').textContent = `${monthName} ${y}`;
+
+  // All active debts in this month
+  const monthDebts = state.debts.filter(d => {
+    if (d.is_template) return false;
+    const dd = new Date(d.date);
+    return dd.getFullYear() === y && dd.getMonth() === m;
+  });
+
+  let totalCapital = 0, totalInterest = 0, totalPaid = 0;
+  monthDebts.forEach(d => {
+    totalCapital += calcRemainingCapital(d);
+    totalInterest += calcAccruedInterest(d);
+    totalPaid += (Number(d.amount) - calcRemainingCapital(d));
+  });
+  const total = totalCapital + totalInterest;
+
+  // Nav arrows
+  el.innerHTML = `
+    <div class="flex-between mb0" style="margin-bottom:12px;">
+      <button onclick="changeMonth(-1)" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--t1);font-size:18px;cursor:pointer;">‹</button>
+      <button onclick="changeMonth(1)" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--t1);font-size:18px;cursor:pointer;">›</button>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Total owed · ${monthName}</div>
+      <div class="summary-amount">${fmt(total)}</div>
+      <div class="summary-split">
+        <div class="split-item"><span class="split-lbl">Principal</span><span class="split-val">${fmt(totalCapital)}</span></div>
+        <div class="split-item"><span class="split-lbl">Interest</span><span class="split-val text-accent">${fmt(totalInterest)}</span></div>
+        <div class="split-item"><span class="split-lbl">Paid</span><span class="split-val text-green">${fmt(totalPaid)}</span></div>
+      </div>
+    </div>
+    <div class="section-label">Debts · ${monthName}</div>
+    ${monthDebts.length ? monthDebts.map(d => debtCardHTML(d)).join('') : '<div style="color:var(--t3);font-size:14px;text-align:center;padding:32px 0;">No debts this month</div>'}
+  `;
+}
+
+function changeMonth(dir) {
+  state.currentMonth += dir;
+  if (state.currentMonth < 0) { state.currentMonth = 11; state.currentYear--; }
+  if (state.currentMonth > 11) { state.currentMonth = 0; state.currentYear++; }
+  renderDashboard();
+}
+
+function renderDashYear(el) {
+  document.getElementById('dash-eyebrow').textContent = state.currentYear.toString();
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const maxAmt = Math.max(1, ...months.map((_, i) => {
+    return state.debts.filter(d => {
+      const dd = new Date(d.date);
+      return dd.getFullYear() === state.currentYear && dd.getMonth() === i && !d.is_template;
+    }).reduce((s, d) => s + Number(d.amount), 0);
+  }));
+
+  let totalY = 0, paidY = 0;
+  state.debts.filter(d => new Date(d.date).getFullYear() === state.currentYear && !d.is_template)
+    .forEach(d => { totalY += Number(d.amount); paidY += Number(d.amount) - calcRemainingCapital(d); });
+
+  const barsHTML = months.map((m, i) => {
+    const amt = state.debts.filter(d => {
+      const dd = new Date(d.date);
+      return dd.getFullYear() === state.currentYear && dd.getMonth() === i && !d.is_template;
+    }).reduce((s, d) => s + Number(d.amount), 0);
+    const paid = state.debts.filter(d => {
+      const dd = new Date(d.date);
+      return dd.getFullYear() === state.currentYear && dd.getMonth() === i && !d.is_template;
+    }).every(d => isSettled(d)) && amt > 0;
+    const pct = amt > 0 ? Math.max(4, (amt / maxAmt) * 100) : 0;
+    return `
+      <div class="year-row">
+        <div class="year-month">${m}</div>
+        <div class="year-track">
+          ${amt > 0 ? `<div class="year-fill ${paid ? 'paid' : 'open'}" style="width:${pct}%">
+            ${paid ? '<span class="year-fill-label">✓</span>' : ''}
+          </div>` : ''}
+        </div>
+        <div class="year-amount">${amt > 0 ? fmt(amt) : '<span style="color:var(--t3)">—</span>'}</div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="flex-between mb0" style="margin-bottom:12px;">
+      <button onclick="state.currentYear--;renderDashboard();" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--t1);font-size:18px;cursor:pointer;">‹</button>
+      <button onclick="state.currentYear++;renderDashboard();" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--t1);font-size:18px;cursor:pointer;">›</button>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Total ${state.currentYear}</div>
+      <div class="summary-amount">${fmt(totalY)}</div>
+      <div class="summary-split">
+        <div class="split-item"><span class="split-lbl">Paid back</span><span class="split-val text-green">${fmt(paidY)}</span></div>
+        <div class="split-item"><span class="split-lbl">Still open</span><span class="split-val text-red">${fmt(totalY - paidY)}</span></div>
+      </div>
+    </div>
+    <div class="section-label">Monthly breakdown</div>
+    ${barsHTML}
+  `;
+}
+
+// ============================================================
+// RENDER: DEBTS
+// ============================================================
+function renderDebts() {
+  const el = document.getElementById('debts-list');
+  const active = state.debts.filter(d => !d.is_template && !isSettled(d));
+  const settled = state.debts.filter(d => !d.is_template && isSettled(d));
+  el.innerHTML = `
+    <div class="section-label">Open (${active.length})</div>
+    ${active.length ? active.map(d => debtCardHTML(d)).join('') : '<div style="color:var(--t3);font-size:14px;padding:16px 0;">No open debts 🎉</div>'}
+    ${settled.length ? `<div class="section-label mt16">Settled (${settled.length})</div>${settled.map(d => debtCardHTML(d)).join('')}` : ''}
+  `;
+}
+
+function debtCardHTML(debt) {
+  const remaining = calcRemainingCapital(debt);
+  const interest = calcAccruedInterest(debt);
+  const settled = remaining <= 0;
+  const pct = ((Number(debt.amount) - remaining) / Number(debt.amount) * 100).toFixed(0);
+  const status = settled ? 'done' : remaining < Number(debt.amount) ? 'partial' : 'open';
+  return `
+    <div class="card" onclick="openDebtDetail('${debt.id}')" style="cursor:pointer;">
+      <div class="debt-card-header">
+        <div>
+          <div class="debt-title">${esc(debt.description)}</div>
+          <div class="debt-date">${fmtDate(debt.date)} · ${debt.debtor === 'ingmar' ? 'Ingmar → Nadia' : 'Nadia → Ingmar'}</div>
+        </div>
+        <div>
+          <div class="debt-amount ${settled ? 'settled' : ''}">${settled ? 'Settled' : fmt(remaining + interest)}</div>
+          ${!settled && interest > 0 ? `<div class="debt-amount-sub">+${fmt(interest)} interest</div>` : ''}
+        </div>
+      </div>
+      ${!settled ? `<div class="progress-bg"><div class="progress-fill" style="width:${pct}%"></div></div>` : ''}
+      <div class="debt-footer">
+        <div>
+          <span class="tag tag-${status}">${status === 'open' ? 'Open' : status === 'partial' ? 'Partial' : 'Settled'}</span>
+          ${debt.recurring ? `<span class="tag tag-recurring">${debt.recurring}</span>` : ''}
+        </div>
+        ${debt.applies_interest ? `<span style="font-size:11px;color:var(--t3);">${(Number(debt.interest_rate)*100).toFixed(1)}% p.a.</span>` : ''}
+      </div>
+    </div>`;
+}
+
+// ============================================================
+// RENDER: PAYMENTS
+// ============================================================
+function renderPayments() {
+  const el = document.getElementById('payments-list');
+  if (!state.payments.length) {
+    el.innerHTML = '<div style="color:var(--t3);font-size:14px;padding:16px 0;">No payments yet</div>';
+    return;
+  }
+  el.innerHTML = state.payments.map(p => {
+    const allocs = state.allocations.filter(a => a.payment_id === p.id);
+    const totalInterest = allocs.reduce((s, a) => s + Number(a.interest_paid), 0);
+    const totalCapital = allocs.reduce((s, a) => s + Number(a.capital_paid), 0);
+    return `
+      <div class="card">
+        <div class="flex-between">
+          <div>
+            <div style="font-size:15px;font-weight:600;">${p.payer === 'ingmar' ? 'Ingmar' : 'Nadia'} paid</div>
+            <div style="font-size:11px;color:var(--t3);margin-top:2px;">${fmtDate(p.date)}${p.notes ? ' · ' + esc(p.notes) : ''}</div>
+          </div>
+          <div style="font-size:20px;font-weight:700;color:var(--green);">${fmt(p.amount)}</div>
+        </div>
+        ${allocs.length ? `
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+            <div style="font-size:10px;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em;">Allocation</div>
+            ${allocs.map(a => {
+              const debt = state.debts.find(d => d.id === a.debt_id);
+              return debt ? `
+                <div class="flex-between" style="margin-bottom:4px;">
+                  <span style="font-size:12px;color:var(--t2);">${esc(debt.description)}</span>
+                  <span style="font-size:12px;font-weight:600;color:var(--green);">-${fmt(Number(a.interest_paid)+Number(a.capital_paid))}</span>
+                </div>` : '';
+            }).join('')}
+          </div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+// ============================================================
+// RENDER: HISTORY
+// ============================================================
+function renderHistory() {
+  const el = document.getElementById('history-content');
+  const years = [...new Set(state.debts.filter(d => !d.is_template).map(d => new Date(d.date).getFullYear()))].sort((a,b) => b-a);
+  if (!years.length) { el.innerHTML = '<div style="color:var(--t3);font-size:14px;padding:16px 0;">No history yet</div>'; return; }
+
+  // Lifetime totals
+  const lifetimeAdded = state.debts.filter(d => !d.is_template).reduce((s,d) => s+Number(d.amount),0);
+  const lifetimeInterest = state.debts.filter(d => !d.is_template).reduce((s,d) => s+calcTotalInterestPaid(d),0);
+  const lifetimeOpen = state.debts.filter(d => !d.is_template && !isSettled(d)).reduce((s,d) => s+calcRemainingCapital(d)+calcAccruedInterest(d),0);
+
+  let html = `
+    <div class="summary-card" style="margin-bottom:20px;">
+      <div class="summary-label">Lifetime total</div>
+      <div class="summary-amount">${fmt(lifetimeAdded)}</div>
+      <div class="summary-split">
+        <div class="split-item"><span class="split-lbl">Interest paid</span><span class="split-val text-accent">${fmt(lifetimeInterest)}</span></div>
+        <div class="split-item"><span class="split-lbl">Still open</span><span class="split-val text-red">${fmt(lifetimeOpen)}</span></div>
+      </div>
+    </div>
+    <div class="section-label">By year</div>`;
+
+  years.forEach(y => {
+    const yDebts = state.debts.filter(d => !d.is_template && new Date(d.date).getFullYear() === y);
+    const yAdded = yDebts.reduce((s,d) => s+Number(d.amount),0);
+    const yPaid = yDebts.reduce((s,d) => s+(Number(d.amount)-calcRemainingCapital(d)),0);
+    const yInterest = yDebts.reduce((s,d) => s+calcTotalInterestPaid(d),0);
+    const yOpen = yDebts.filter(d => !isSettled(d)).reduce((s,d) => s+calcRemainingCapital(d),0);
+    const isExpY = state.expandedYears.has(y);
+
+    html += `<div class="history-year">
+      <div class="history-year-header" onclick="toggleYear(${y})">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="width:36px;height:36px;border-radius:10px;background:${yOpen>0?'#A78BFA22':'#34D39922'};display:flex;align-items:center;justify-content:center;font-size:18px;">${yOpen>0?'📂':'✅'}</div>
+          <div>
+            <div style="font-size:17px;font-weight:700;">${y}</div>
+            <div style="font-size:11px;color:var(--t3);">${fmt(yInterest)} interest</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="text-align:right;">
+            <div style="font-size:15px;font-weight:700;color:${yOpen>0?'var(--red)':'var(--green)'};">${yOpen>0?fmt(yOpen)+' open':'Settled'}</div>
+            <div style="font-size:11px;color:var(--t3);">of ${fmt(yAdded)}</div>
+          </div>
+          <span class="chevron">${isExpY?'▾':'▸'}</span>
+        </div>
+      </div>`;
+
+    if (isExpY) {
+      html += `<div style="border-top:1px solid var(--border);padding:12px 16px;background:var(--surface);display:flex;gap:20px;flex-wrap:wrap;">
+        <div><div style="font-size:10px;color:var(--t3);">Total added</div><div style="font-size:14px;font-weight:600;">${fmt(yAdded)}</div></div>
+        <div><div style="font-size:10px;color:var(--t3);">Paid back</div><div style="font-size:14px;font-weight:600;color:var(--green);">${fmt(yPaid)}</div></div>
+        <div><div style="font-size:10px;color:var(--t3);">Interest</div><div style="font-size:14px;font-weight:600;color:var(--accent);">${fmt(yInterest)}</div></div>
+      </div>`;
+
+      const months = [...new Set(yDebts.map(d => new Date(d.date).getMonth()))].sort((a,b)=>b-a);
+      months.forEach(mi => {
+        const mDebts = yDebts.filter(d => new Date(d.date).getMonth() === mi);
+        const mAdded = mDebts.reduce((s,d) => s+Number(d.amount),0);
+        const mPaid = mDebts.reduce((s,d) => s+(Number(d.amount)-calcRemainingCapital(d)),0);
+        const mInterest = mDebts.reduce((s,d) => s+calcTotalInterestPaid(d),0);
+        const mSettled = mDebts.every(d => isSettled(d));
+        const mKey = `${y}-${mi}`;
+        const isExpM = state.expandedMonths.has(mKey);
+        const mName = new Date(y,mi).toLocaleString('en',{month:'long'});
+
+        html += `<div class="history-month-header" onclick="toggleMonth('${mKey}')">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:12px;font-weight:600;color:var(--t2);width:52px;">${mName}</span>
+            <div><span style="font-size:13px;font-weight:500;">${fmt(mAdded)}</span><span style="font-size:11px;color:var(--t3);"> · ${mDebts.length} items</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="text-align:right;">
+              <div style="font-size:12px;font-weight:600;color:${mSettled?'var(--green)':mPaid>0?'var(--accent)':'var(--t3)'};">${mSettled?'✓ Settled':mPaid>0?fmt(mPaid)+' paid':'Unpaid'}</div>
+              <div style="font-size:10px;color:var(--t3);">${fmt(mInterest)} interest</div>
+            </div>
+            <span class="chevron">${isExpM?'▾':'▸'}</span>
+          </div>
+        </div>`;
+
+        if (isExpM) {
+          mDebts.forEach(d => {
+            const rem = calcRemainingCapital(d);
+            const int = calcAccruedInterest(d);
+            const settled = rem <= 0;
+            html += `<div class="history-debt-row">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <div style="width:6px;height:6px;border-radius:3px;background:${settled?'var(--green)':rem<Number(d.amount)?'var(--accent)':'var(--red)'}"></div>
+                <div>
+                  <div style="font-size:13px;">${esc(d.description)}</div>
+                  ${int>0?`<div style="font-size:10px;color:var(--t3);">+${fmt(int)} interest</div>`:''}
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:13px;font-weight:600;color:${settled?'var(--green)':rem<Number(d.amount)?'var(--accent)':'var(--t1)'};">${fmt(Number(d.amount))}</div>
+                <div style="font-size:10px;color:var(--t3);">${settled?'settled':rem<Number(d.amount)?fmt(rem)+' left':'unpaid'}</div>
+              </div>
+            </div>`;
+          });
+        }
+      });
+    }
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function toggleYear(y) { state.expandedYears.has(y)?state.expandedYears.delete(y):state.expandedYears.add(y); renderHistory(); }
+function toggleMonth(k) { state.expandedMonths.has(k)?state.expandedMonths.delete(k):state.expandedMonths.add(k); renderHistory(); }
+
+// ============================================================
+// RENDER: SETTINGS
+// ============================================================
+function renderSettings() {
+  const isAdmin = state.profile?.role === 'admin';
+  document.getElementById('settings-content').innerHTML = `
+    <div class="card" style="margin-bottom:10px;">
+      <div style="font-size:13px;color:var(--t2);margin-bottom:4px;">Logged in as</div>
+      <div style="font-size:17px;font-weight:600;">${state.profile?.name || '—'}</div>
+      <div style="font-size:12px;color:var(--t3);">${state.user?.email || ''} · ${isAdmin?'Admin (Nadia)':'User (Ingmar)'}</div>
+    </div>
+    <div class="card" style="margin-bottom:10px;">
+      <div style="font-size:13px;color:var(--t2);margin-bottom:4px;">Default interest rate</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <input id="rate-input" class="form-input" type="number" step="0.1" value="6" style="width:100px;" />
+        <span style="font-size:14px;color:var(--t2);">% per year</span>
+      </div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px;">Applied to new Ingmar debts · overridable per debt</div>
+    </div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="flex-between">
+        <div>
+          <div style="font-size:14px;font-weight:600;">Push notifications</div>
+          <div style="font-size:11px;color:var(--t3);margin-top:2px;">All changes · monthly reminders</div>
+        </div>
+        <button class="btn-primary" style="width:auto;padding:8px 16px;font-size:13px;" onclick="requestNotifications()">Enable</button>
+      </div>
+    </div>
+    ${isAdmin ? `
+    <div class="section-label">Data</div>
+    <button class="btn-secondary" onclick="exportCSV()" style="margin-bottom:10px;">📥 Export all data as CSV</button>
+    <button class="btn-secondary btn-danger" onclick="confirmSignOut()">Sign out</button>
+    ` : `<button class="btn-secondary" onclick="confirmSignOut()">Sign out</button>`}
+  `;
+}
+
+// ============================================================
+// DEBT DETAIL MODAL
+// ============================================================
+function openDebtDetail(id) {
+  const debt = state.debts.find(d => d.id === id);
+  if (!debt) return;
+  const remaining = calcRemainingCapital(debt);
+  const interest = calcAccruedInterest(debt);
+  const paidCapital = Number(debt.amount) - remaining;
+  const paidInterest = calcTotalInterestPaid(debt);
+  const settled = remaining <= 0;
+  const pct = Math.round((paidCapital / Number(debt.amount)) * 100);
+  const isAdmin = state.profile?.role === 'admin';
+
+  const allocs = state.allocations.filter(a => a.debt_id === id).map(a => {
+    const p = state.payments.find(pp => pp.id === a.payment_id);
+    return { ...a, payment: p };
+  }).sort((a,b) => new Date(b.payment?.date||0) - new Date(a.payment?.date||0));
+
+  const html = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div class="modal-handle"></div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
+          <div class="modal-title" style="margin-bottom:0;">${esc(debt.description)}</div>
+          ${isAdmin?`<button onclick="deleteDebt('${id}')" style="background:none;border:none;color:var(--red);font-size:22px;cursor:pointer;">🗑</button>`:''}
+        </div>
+        <div style="font-size:13px;color:var(--t2);margin-bottom:20px;">${fmtDate(debt.date)} · ${debt.debtor==='ingmar'?'Ingmar → Nadia':'Nadia → Ingmar'}${debt.applies_interest?` · ${(Number(debt.interest_rate)*100).toFixed(1)}% p.a.`:' · No interest'}</div>
+
+        <div class="breakdown-grid">
+          <div class="breakdown-cell"><div class="breakdown-cell-label">Remaining</div><div class="breakdown-cell-val text-red">${fmt(remaining)}</div></div>
+          <div class="breakdown-cell"><div class="breakdown-cell-label">Interest due</div><div class="breakdown-cell-val text-accent">${fmt(interest)}</div></div>
+          <div class="breakdown-cell"><div class="breakdown-cell-label">Original</div><div class="breakdown-cell-val">${fmt(Number(debt.amount))}</div></div>
+          <div class="breakdown-cell"><div class="breakdown-cell-label">Paid back</div><div class="breakdown-cell-val text-green">${fmt(paidCapital)}</div></div>
+        </div>
+
+        <div class="progress-bg" style="height:6px;border-radius:6px;margin-bottom:6px;">
+          <div class="progress-fill" style="width:${pct}%;height:6px;border-radius:6px;"></div>
+        </div>
+        <div class="flex-between" style="margin-bottom:20px;">
+          <span style="font-size:11px;color:var(--t3);">${pct}% paid</span>
+          <span style="font-size:11px;color:var(--t3);">${100-pct}% remaining</span>
+        </div>
+
+        ${allocs.length ? `
+          <div class="section-label">Payment history</div>
+          ${allocs.map(a => `
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background:var(--green);"></div>
+              <div class="timeline-content">
+                <div class="flex-between">
+                  <div>
+                    <div class="timeline-title">${a.payment?.payer==='ingmar'?'Ingmar':'Nadia'} paid</div>
+                    <div class="timeline-sub">${fmtDate(a.payment?.date)}</div>
+                    <div style="font-size:11px;color:var(--t3);margin-top:2px;">
+                      ${Number(a.interest_paid)>0?`${fmt(a.interest_paid)} interest · `:''}${fmt(a.capital_paid)} capital
+                    </div>
+                  </div>
+                  <div style="font-size:15px;font-weight:700;color:var(--green);">-${fmt(Number(a.interest_paid)+Number(a.capital_paid))}</div>
+                </div>
+              </div>
+            </div>`).join('')}
+        ` : ''}
+
+        ${!settled ? `<button class="btn-primary" style="margin-bottom:8px;" onclick="closeModal();openModal('add-payment')">Record payment</button>` : `<div class="info-note green">✓ Fully settled</div>`}
+        <button class="btn-secondary" onclick="exportDebtPDF('${id}')">Export as PDF</button>
+      </div>
+    </div>`;
+  showModal(html);
+}
+
+// ============================================================
+// ADD DEBT MODAL
+// ============================================================
+function openModal(type) {
+  if (type === 'add-debt') showAddDebt();
+  else if (type === 'add-payment') showAddPayment();
+}
+
+function showAddDebt() {
+  const isAdmin = state.profile?.role === 'admin';
+  const defaultRate = 6;
+  const html = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div class="modal-handle"></div>
+        <div class="modal-title">Add debt</div>
+        <div class="info-note" id="debt-note">⚡ Interest applies · Ingmar is debtor · ${defaultRate}% p.a.</div>
+
+        <div class="form-field">
+          <label class="form-label">Description</label>
+          <input class="form-input" id="d-desc" placeholder="e.g. Rent July" />
+        </div>
+
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">Amount (€)</label>
+            <input class="form-input" id="d-amount" type="number" inputmode="decimal" placeholder="0.00" oninput="updateSplitPreview()" />
+          </div>
+          <div class="form-field">
+            <label class="form-label">Date</label>
+            <input class="form-input" id="d-date" type="date" value="${today()}" />
+          </div>
+        </div>
+
+        ${isAdmin ? `
+        <div class="form-field">
+          <label class="form-label">Debtor</label>
+          <div class="pill-row">
+            <button class="pill active" id="debtor-ingmar" onclick="setDebtor('ingmar')">Ingmar owes Nadia</button>
+            <button class="pill" id="debtor-nadia" onclick="setDebtor('nadia')">Nadia owes Ingmar</button>
+          </div>
+        </div>` : ''}
+
+        <div class="form-field">
+          <label class="form-label">How to split?</label>
+          <div class="split-toggle">
+            <button class="split-btn active-full" id="btn-full" onclick="setSplit('full')">
+              <div class="split-btn-icon">💳</div>
+              <div class="split-btn-label" style="color:var(--accent);">Full</div>
+              <div class="split-btn-sub" style="color:#A78BFA88;">100% owed</div>
+            </button>
+            <button class="split-btn" id="btn-split" onclick="setSplit('split')">
+              <div class="split-btn-icon">✂️</div>
+              <div class="split-btn-label" style="color:var(--t2);">Split</div>
+              <div class="split-btn-sub" style="color:var(--t3);">50% owed</div>
+            </button>
+          </div>
+          <div id="split-preview" style="display:none;" class="info-note green"></div>
+        </div>
+
+        <div class="form-field" id="rate-field">
+          <label class="form-label">Interest rate (% p.a.)</label>
+          <input class="form-input" id="d-rate" type="number" step="0.1" value="${defaultRate}" />
+          <div class="form-hint">Default ${defaultRate}% · daily ACT/365</div>
+        </div>
+
+        <div class="form-field">
+          <div class="flex-between" style="margin-bottom:8px;">
+            <div>
+              <div class="form-label" style="margin-bottom:1px;">Recurring</div>
+              <div class="form-hint" style="margin-top:0;">Auto-adds on 1st of period</div>
+            </div>
+            <div class="ios-toggle off" id="recurring-toggle" onclick="toggleRecurring()">
+              <div class="ios-thumb"></div>
+            </div>
+          </div>
+          <div id="recurring-options" style="display:none;">
+            <div class="pill-row">
+              <button class="pill active" id="rec-monthly" onclick="setRecurrence('monthly')">Monthly</button>
+              <button class="pill" id="rec-quarterly" onclick="setRecurrence('quarterly')">Quarterly</button>
+              <button class="pill" id="rec-yearly" onclick="setRecurrence('yearly')">Yearly</button>
+            </div>
+            <div class="form-hint mt8" id="rec-hint">Next: automatic on 1st of each month</div>
+          </div>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Notes (optional)</label>
+          <input class="form-input" id="d-notes" placeholder="Optional note" />
+        </div>
+
+        <button class="btn-primary" id="add-debt-btn" onclick="submitDebt()">Add debt</button>
+      </div>
+    </div>`;
+  showModal(html);
+  window._debtForm = { debtor: 'ingmar', split: 'full', recurring: null };
+}
+
+function setDebtor(who) {
+  window._debtForm.debtor = who;
+  document.getElementById('debtor-ingmar')?.classList.toggle('active', who==='ingmar');
+  document.getElementById('debtor-nadia')?.classList.toggle('active', who==='nadia');
+  const applyInterest = who === 'ingmar';
+  document.getElementById('rate-field').style.display = applyInterest ? 'block' : 'none';
+  document.getElementById('debt-note').textContent = applyInterest
+    ? `⚡ Interest applies · Ingmar is debtor · ${document.getElementById('d-rate')?.value||6}% p.a.`
+    : `ℹ️ No interest · Nadia is debtor`;
+  updateSplitPreview();
+}
+
+function setSplit(type) {
+  window._debtForm.split = type;
+  document.getElementById('btn-full').className = `split-btn ${type==='full'?'active-full':''}`;
+  document.getElementById('btn-split').className = `split-btn ${type==='split'?'active-split':''}`;
+  document.getElementById('btn-full').querySelector('.split-btn-label').style.color = type==='full'?'var(--accent)':'var(--t2)';
+  document.getElementById('btn-split').querySelector('.split-btn-label').style.color = type==='split'?'var(--green)':'var(--t2)';
+  updateSplitPreview();
+}
+
+function updateSplitPreview() {
+  const amt = parseFloat(document.getElementById('d-amount')?.value) || 0;
+  const preview = document.getElementById('split-preview');
+  if (!preview) return;
+  if (window._debtForm?.split === 'split' && amt > 0) {
+    preview.style.display = 'block';
+    preview.innerHTML = `✂️ Total: ${fmt(amt)} · <strong style="color:var(--green);">${fmt(amt/2)} added as debt</strong> · ${fmt(amt/2)} not tracked`;
+  } else { preview.style.display = 'none'; }
+}
+
+function toggleRecurring() {
+  const t = document.getElementById('recurring-toggle');
+  const opts = document.getElementById('recurring-options');
+  const isOn = t.classList.contains('on');
+  t.classList.toggle('on', !isOn);
+  t.classList.toggle('off', isOn);
+  opts.style.display = isOn ? 'none' : 'block';
+  window._debtForm.recurring = isOn ? null : 'monthly';
+}
+
+function setRecurrence(val) {
+  window._debtForm.recurring = val;
+  ['monthly','quarterly','yearly'].forEach(r => {
+    document.getElementById(`rec-${r}`)?.classList.toggle('active', r===val);
+  });
+  const hints = { monthly:'Next: automatic on 1st of each month', quarterly:'Next: automatic on 1st of each quarter', yearly:'Next: automatic on 1st of each year' };
+  document.getElementById('rec-hint').textContent = hints[val];
+}
+
+async function submitDebt() {
+  const desc = document.getElementById('d-desc').value.trim();
+  const amount = parseFloat(document.getElementById('d-amount').value);
+  const date = document.getElementById('d-date').value;
+  const rate = parseFloat(document.getElementById('d-rate')?.value || 6) / 100;
+  const notes = document.getElementById('d-notes').value.trim();
+  const { debtor, split, recurring } = window._debtForm;
+
+  if (!desc || !amount || !date) return showToast('Please fill in all fields');
+
+  const isAdmin = state.profile?.role === 'admin';
+  const creditor = debtor === 'ingmar' ? 'nadia' : 'ingmar';
+  const appliesInterest = debtor === 'ingmar';
+  const originalAmount = amount;
+  const debtAmount = split === 'split' ? Math.round(amount / 2 * 100) / 100 : amount;
+
+  document.getElementById('add-debt-btn').textContent = 'Adding…';
+  const { data, error } = await sb.from('debts').insert({
+    created_by: state.user.id,
+    debtor, creditor,
+    description: desc,
+    amount: debtAmount,
+    original_amount: originalAmount,
+    split_type: split,
+    interest_rate: appliesInterest ? rate : 0,
+    applies_interest: appliesInterest,
+    date, recurring: recurring || null,
+    is_template: !!recurring,
+    notes: notes || null,
+  }).select().single();
+
+  if (error) { showToast('Error: ' + error.message); document.getElementById('add-debt-btn').textContent = 'Add debt'; return; }
+
+  closeModal();
+  await loadData();
+  showToast('Debt added ✓');
+  await sendNotification('debt_added', data);
+}
+
+// ============================================================
+// ADD PAYMENT MODAL
+// ============================================================
+function showAddPayment() {
+  const isAdmin = state.profile?.role === 'admin';
+  const html = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div class="modal-handle"></div>
+        <div class="modal-title">Record payment</div>
+
+        ${isAdmin ? `
+        <div class="form-field">
+          <label class="form-label">Who paid?</label>
+          <div class="pill-row">
+            <button class="pill active" id="payer-ingmar" onclick="setPayer('ingmar')">Ingmar</button>
+            <button class="pill" id="payer-nadia" onclick="setPayer('nadia')">Nadia</button>
+          </div>
+        </div>` : ''}
+
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label">Amount (€)</label>
+            <input class="form-input" id="p-amount" type="number" inputmode="decimal" placeholder="0.00" oninput="updateAllocPreview()" style="font-size:24px;font-weight:700;" />
+          </div>
+          <div class="form-field">
+            <label class="form-label">Date</label>
+            <input class="form-input" id="p-date" type="date" value="${today()}" />
+          </div>
+        </div>
+
+        <div id="alloc-preview"></div>
+
+        <div class="form-field">
+          <label class="form-label">Note (optional)</label>
+          <input class="form-input" id="p-notes" placeholder="e.g. June transfer" />
+        </div>
+
+        <button class="btn-primary" id="add-payment-btn" onclick="submitPayment()">Confirm payment</button>
+      </div>
+    </div>`;
+  showModal(html);
+  window._paymentForm = { payer: state.profile?.name?.toLowerCase() === 'ingmar' ? 'ingmar' : 'ingmar' };
+}
+
+function setPayer(who) {
+  window._paymentForm.payer = who;
+  ['ingmar','nadia'].forEach(p => document.getElementById(`payer-${p}`)?.classList.toggle('active', p===who));
+  updateAllocPreview();
+}
+
+function updateAllocPreview() {
+  const amt = parseFloat(document.getElementById('p-amount')?.value) || 0;
+  const preview = document.getElementById('alloc-preview');
+  if (!preview || amt <= 0) { if (preview) preview.innerHTML = ''; return; }
+  const payer = window._paymentForm?.payer || 'ingmar';
+  const { allocations, surplus } = simulateAllocation(amt, payer);
+  const totalI = allocations.reduce((s,a) => s+a.interestPaid, 0);
+  const totalC = allocations.reduce((s,a) => s+a.capitalPaid, 0);
+
+  preview.innerHTML = `
+    <div class="alloc-preview" style="margin-bottom:14px;">
+      <div class="alloc-header">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--t2);letter-spacing:.07em;text-transform:uppercase;">Allocation preview</div>
+          <div style="font-size:13px;color:var(--t1);margin-top:3px;">
+            <span style="color:var(--accent);">${fmt(totalI)} interest</span> · <span>${fmt(totalC)} capital</span>
+            ${surplus > 0 ? ` · <span style="color:var(--green);">${fmt(surplus)} surplus</span>` : ''}
+          </div>
+        </div>
+      </div>
+      ${allocations.map(a => `
+        <div class="alloc-row">
+          <div class="alloc-row-header">
+            <div>
+              <div style="font-size:13px;font-weight:600;">${esc(a.debt.description)}</div>
+              <div style="font-size:11px;color:var(--t3);">${fmtDate(a.debt.date)}</div>
+            </div>
+            <div style="font-size:14px;font-weight:700;color:var(--green);">-${fmt(a.interestPaid+a.capitalPaid)}</div>
+          </div>
+          <div class="alloc-pills">
+            ${a.interestPaid>0?`<div class="alloc-pill"><div class="alloc-dot" style="background:var(--accent)"></div>Interest ${fmt(a.interestPaid)}</div>`:''}
+            ${a.capitalPaid>0?`<div class="alloc-pill"><div class="alloc-dot" style="background:var(--t2)"></div>Capital ${fmt(a.capitalPaid)}</div>`:''}
+          </div>
+        </div>`).join('')}
+      ${surplus>0?`<div style="padding:10px 16px;background:#34D39911;border-top:1px solid var(--border);font-size:12px;color:var(--green);font-weight:600;">✓ All debts cleared · ${fmt(surplus)} surplus</div>`:''}
+    </div>`;
+}
+
+async function submitPayment() {
+  const amount = parseFloat(document.getElementById('p-amount').value);
+  const date = document.getElementById('p-date').value;
+  const notes = document.getElementById('p-notes').value.trim();
+  const payer = window._paymentForm?.payer || 'ingmar';
+  if (!amount || !date) return showToast('Please fill in all fields');
+
+  document.getElementById('add-payment-btn').textContent = 'Saving…';
+  const { allocations } = simulateAllocation(amount, payer);
+
+  const { data: paymentData, error: pErr } = await sb.from('payments').insert({
+    created_by: state.user.id, payer, amount, date, notes: notes || null
+  }).select().single();
+
+  if (pErr) { showToast('Error: ' + pErr.message); return; }
+
+  if (allocations.length) {
+    await sb.from('payment_allocations').insert(
+      allocations.map(a => ({
+        payment_id: paymentData.id,
+        debt_id: a.debt.id,
+        interest_paid: a.interestPaid,
+        capital_paid: a.capitalPaid,
+      }))
+    );
+  }
+
+  closeModal();
+  await loadData();
+  showToast('Payment recorded ✓');
+  await sendNotification('payment_added', paymentData);
+}
+
+// ============================================================
+// DELETE
+// ============================================================
+async function deleteDebt(id) {
+  if (!confirm('Delete this debt and all its payment records?')) return;
+  await sb.from('payment_allocations').delete().eq('debt_id', id);
+  await sb.from('debts').delete().eq('id', id);
+  closeModal();
+  await loadData();
+  showToast('Deleted ✓');
+}
+
+// ============================================================
+// PUSH NOTIFICATIONS
+// ============================================================
+async function requestNotifications() {
+  if (!('Notification' in window)) return showToast('Notifications not supported on this device');
+  const perm = await Notification.requestPermission();
+  showToast(perm === 'granted' ? 'Notifications enabled ✓' : 'Notifications blocked');
+}
+
+async function sendNotification(type, data) {
+  if (Notification.permission !== 'granted') return;
+  const notifs = {
+    debt_added: { title: 'New debt added 💰', body: `${data.description} · ${fmt(data.amount)}` },
+    payment_added: { title: 'Payment confirmed ✅', body: `${fmt(data.amount)} recorded` },
+  };
+  const n = notifs[type];
+  if (n) new Notification(n.title, { body: n.body, icon: '/icon-192.png' });
+}
+
+// Monthly reminder via Service Worker (registered separately)
+
+// ============================================================
+// EXPORT CSV
+// ============================================================
+function exportCSV() {
+  const rows = [['ID','Description','Debtor','Creditor','Amount','Date','Interest Rate','Split','Recurring','Settled','Remaining Capital','Accrued Interest']];
+  state.debts.filter(d => !d.is_template).forEach(d => {
+    rows.push([
+      d.id, d.description, d.debtor, d.creditor, d.amount, d.date,
+      (Number(d.interest_rate)*100).toFixed(2)+'%', d.split_type, d.recurring||'',
+      isSettled(d)?'Yes':'No', calcRemainingCapital(d), calcAccruedInterest(d)
+    ]);
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `owed-export-${today()}.csv`;
+  a.click();
+}
+
+function exportDebtPDF(id) { showToast('PDF export coming soon'); }
+
+// ============================================================
+// UI HELPERS
+// ============================================================
+function switchTab(tab) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+  document.getElementById(`screen-${tab}`).classList.add('active');
+  const tabs = ['dashboard','debts','payments','history','settings'];
+  document.querySelectorAll('.tab-item')[tabs.indexOf(tab)]?.classList.add('active');
+  if (tab === 'history') renderHistory();
+  if (tab === 'settings') renderSettings();
+}
+
+function renderAll() {
+  renderDashboard();
+  renderDebts();
+  renderPayments();
+}
+
+function showModal(html) {
+  document.getElementById('modal-container').innerHTML = html;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal() {
+  document.getElementById('modal-container').innerHTML = '';
+  document.body.style.overflow = '';
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function confirmSignOut() {
+  if (confirm('Sign out?')) sb.auth.signOut();
+}
+
+function fmt(n) { return '€' + Number(n||0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }); }
+function today() { return new Date().toISOString().split('T')[0]; }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ============================================================
+// RECURRING DEBTS: check on load
+// ============================================================
+async function checkRecurring() {
+  const templates = state.debts.filter(d => d.is_template && d.recurring);
+  const todayStr = today();
+  const todayDate = new Date(todayStr);
+  if (todayDate.getDate() !== 1) return; // only run on 1st of month
+
+  for (const t of templates) {
+    // Check if already created for this period
+    const existing = state.debts.find(d =>
+      d.recurring_parent_id === t.id &&
+      d.date === todayStr
+    );
+    if (existing) continue;
+
+    // Create new instance
+    await sb.from('debts').insert({
+      created_by: t.created_by,
+      debtor: t.debtor, creditor: t.creditor,
+      description: t.description,
+      amount: t.amount, original_amount: t.original_amount,
+      split_type: t.split_type,
+      interest_rate: t.interest_rate,
+      applies_interest: t.applies_interest,
+      date: todayStr,
+      recurring: t.recurring,
+      recurring_parent_id: t.id,
+      is_template: false,
+      notes: t.notes,
+    });
+  }
+}
+
+// ============================================================
+// Register Service Worker
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(console.error);
+  });
+}
+
+// START
+// ============================================================
+init().then(checkRecurring);
+</script>
+</body>
+</html>
