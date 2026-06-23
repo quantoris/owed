@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-title" content="Owed" />
   <meta name="theme-color" content="#0A0A0F" />
   <title>Owed</title>
-  <link rel="manifest" href="/manifest.json" />
-  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="manifest" href="/owed/manifest.json" />
+  <link rel="apple-touch-icon" href="/owed/icons/icon-192.png" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     /* ── Reset & tokens ───────────────────────────── */
@@ -336,6 +336,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
 let state = {
   user: null,
   profile: null,
+  profiles: {},
   debts: [],
   payments: [],
   allocations: [],
@@ -365,6 +366,10 @@ async function init() {
 async function loadProfile() {
   const { data } = await sb.from('profiles').select('*').eq('id', state.user.id).single();
   state.profile = data;
+  // Load all profiles for label resolution
+  const { data: allProfiles } = await sb.from('profiles').select('*');
+  state.profiles = {};
+  (allProfiles || []).forEach(p => { state.profiles[p.id] = p; });
 }
 
 async function loadData() {
@@ -391,7 +396,7 @@ async function sendMagicLink() {
     email,
     options: {
       shouldCreateUser: false,
-      emailRedirectTo: 'https://nadiashffl.github.io/schulden-app/',
+      emailRedirectTo: 'https://quantoris.github.io/owed/',
     }
   });
   document.getElementById('auth-btn').textContent = 'Send magic link';
@@ -417,11 +422,13 @@ async function ensureProfile() {
   const { data } = await sb.from('profiles').select('*').eq('id', state.user.id).single();
   if (!data) {
     // First login: determine role by email
-    const isNadia = state.user.email?.toLowerCase().includes('nadia');
+    // First login: ask user for their display name
+    // Role must be set manually in Supabase dashboard after first login
+    const displayName = prompt('Welcome to Owed!\nWhat is your name?')?.trim() || 'User';
     await sb.from('profiles').insert({
       id: state.user.id,
-      name: isNadia ? 'Nadia' : 'Ingmar',
-      role: isNadia ? 'admin' : 'user',
+      name: displayName,
+      role: 'user',
     });
     await loadProfile();
   } else {
@@ -510,6 +517,33 @@ function simulateAllocation(amount, payer) {
   return { allocations, surplus: Math.round(remaining * 100) / 100 };
 }
 
+
+// ============================================================
+// USER LABEL HELPERS
+// user1 = the one who owes money (pays interest)
+// user2 = the one who is owed money (admin/creditor by default)
+// Names come from profiles table, set by each user on first login
+// ============================================================
+function getUserLabel(role) {
+  if (role === 'user1') {
+    const p = Object.values(state.profiles || {}).find(p => p.role === 'user');
+    return p?.name || 'User 1';
+  } else {
+    const p = Object.values(state.profiles || {}).find(p => p.role === 'admin');
+    return p?.name || 'User 2';
+  }
+}
+
+function debtorLabel(debt) {
+  const d = getUserLabel(debt.debtor);
+  const c = getUserLabel(debt.creditor);
+  return `${d} → ${c}`;
+}
+
+function payerLabel(payer) {
+  return getUserLabel(payer);
+}
+
 // ============================================================
 // RENDER: DASHBOARD
 // ============================================================
@@ -527,44 +561,82 @@ function renderDashboard() {
 }
 
 function renderDashMonth(el) {
-  const now = new Date();
   const m = state.currentMonth;
   const y = state.currentYear;
   const monthName = new Date(y, m).toLocaleString('en', { month: 'long' });
   document.getElementById('dash-eyebrow').textContent = `${monthName} ${y}`;
 
-  // All active debts in this month
+  const isAdmin = state.profile?.role === 'admin';
+  const myRole = isAdmin ? 'user2' : 'user1';   // admin=user2(creditor), user=user1(debtor)
+  const otherRole = isAdmin ? 'user1' : 'user2';
+  const myName = state.profile?.name || 'You';
+
+  // All debts this month
   const monthDebts = state.debts.filter(d => {
     if (d.is_template) return false;
     const dd = new Date(d.date);
     return dd.getFullYear() === y && dd.getMonth() === m;
   });
 
-  let totalCapital = 0, totalInterest = 0, totalPaid = 0;
-  monthDebts.forEach(d => {
-    totalCapital += calcRemainingCapital(d);
-    totalInterest += calcAccruedInterest(d);
-    totalPaid += (Number(d.amount) - calcRemainingCapital(d));
-  });
-  const total = totalCapital + totalInterest;
+  // What I owe (I am debtor)
+  const iOweDebts = monthDebts.filter(d => d.debtor === myRole);
+  const iOweCapital  = iOweDebts.reduce((s,d) => s + calcRemainingCapital(d), 0);
+  const iOweInterest = iOweDebts.reduce((s,d) => s + calcAccruedInterest(d), 0);
+  const iOwePaid     = iOweDebts.reduce((s,d) => s + (Number(d.amount) - calcRemainingCapital(d)), 0);
+  const iOweTotal    = iOweCapital + iOweInterest;
 
-  // Nav arrows
+  // What I'm owed (other is debtor)
+  const owedMeDebts = monthDebts.filter(d => d.debtor === otherRole);
+  const owedMeCapital  = owedMeDebts.reduce((s,d) => s + calcRemainingCapital(d), 0);
+  const owedMeInterest = owedMeDebts.reduce((s,d) => s + calcAccruedInterest(d), 0);
+  const owedMePaid     = owedMeDebts.reduce((s,d) => s + (Number(d.amount) - calcRemainingCapital(d)), 0);
+  const owedMeTotal    = owedMeCapital + owedMeInterest;
+
+  // Net position: positive = I get money, negative = I owe money
+  const net = owedMeTotal - iOweTotal;
+  const netLabel = net >= 0 ? `You receive` : `You owe`;
+  const netColor = net >= 0 ? 'var(--green)' : 'var(--red)';
+  const otherName = getUserLabel(otherRole);
+
   el.innerHTML = `
     <div class="flex-between mb0" style="margin-bottom:12px;">
       <button onclick="changeMonth(-1)" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--t1);font-size:18px;cursor:pointer;">‹</button>
       <button onclick="changeMonth(1)" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--t1);font-size:18px;cursor:pointer;">›</button>
     </div>
+
+    <!-- Hero: net position for this user -->
     <div class="summary-card">
-      <div class="summary-label">Total owed · ${monthName}</div>
-      <div class="summary-amount">${fmt(total)}</div>
-      <div class="summary-split">
-        <div class="split-item"><span class="split-lbl">Principal</span><span class="split-val">${fmt(totalCapital)}</span></div>
-        <div class="split-item"><span class="split-lbl">Interest</span><span class="split-val text-accent">${fmt(totalInterest)}</span></div>
-        <div class="split-item"><span class="split-lbl">Paid</span><span class="split-val text-green">${fmt(totalPaid)}</span></div>
+      <div class="summary-label">${netLabel} · ${monthName}</div>
+      <div class="summary-amount" style="color:${netColor};">${fmt(Math.abs(net))}</div>
+
+      <!-- Split: what each person owes/is owed -->
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);">
+
+        ${owedMeTotal > 0 ? `
+        <div>
+          <div style="font-size:10px;color:var(--t2);letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px;">${otherName} owes you</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <div class="split-item"><span class="split-lbl">Principal</span><span class="split-val text-red">${fmt(owedMeCapital)}</span></div>
+            <div class="split-item"><span class="split-lbl">Interest</span><span class="split-val text-accent">${fmt(owedMeInterest)}</span></div>
+            <div class="split-item"><span class="split-lbl">Paid</span><span class="split-val text-green">${fmt(owedMePaid)}</span></div>
+          </div>
+        </div>` : ''}
+
+        ${iOweTotal > 0 ? `
+        <div>
+          <div style="font-size:10px;color:var(--t2);letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px;">You owe ${otherName}</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <div class="split-item"><span class="split-lbl">Principal</span><span class="split-val text-red">${fmt(iOweCapital)}</span></div>
+            <div class="split-item"><span class="split-lbl">Interest</span><span class="split-val text-accent">${fmt(iOweInterest)}</span></div>
+            <div class="split-item"><span class="split-lbl">Paid</span><span class="split-val text-green">${fmt(iOwePaid)}</span></div>
+          </div>
+        </div>` : ''}
+
       </div>
     </div>
-    <div class="section-label">Debts · ${monthName}</div>
-    ${monthDebts.length ? monthDebts.map(d => debtCardHTML(d)).join('') : '<div style="color:var(--t3);font-size:14px;text-align:center;padding:32px 0;">No debts this month</div>'}
+
+    <div class="section-label">All entries · ${monthName}</div>
+    ${monthDebts.length ? monthDebts.map(d => debtCardHTML(d)).join('') : '<div style="color:var(--t3);font-size:14px;text-align:center;padding:32px 0;">No entries this month</div>'}
   `;
 }
 
@@ -611,17 +683,28 @@ function renderDashYear(el) {
       </div>`;
   }).join('');
 
+  // Per-user net for year view
+  const isAdminY = state.profile?.role === 'admin';
+  const myRoleY = isAdminY ? 'user2' : 'user1';
+  const otherRoleY = isAdminY ? 'user1' : 'user2';
+  const yearDebts = state.debts.filter(d => new Date(d.date).getFullYear() === state.currentYear && !d.is_template);
+  const owedMeY = yearDebts.filter(d => d.debtor === otherRoleY).reduce((s,d) => s + calcRemainingCapital(d) + calcAccruedInterest(d), 0);
+  const iOweY   = yearDebts.filter(d => d.debtor === myRoleY).reduce((s,d) => s + calcRemainingCapital(d) + calcAccruedInterest(d), 0);
+  const netY = owedMeY - iOweY;
+  const netColorY = netY >= 0 ? 'var(--green)' : 'var(--red)';
+
   el.innerHTML = `
     <div class="flex-between mb0" style="margin-bottom:12px;">
       <button onclick="state.currentYear--;renderDashboard();" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--t1);font-size:18px;cursor:pointer;">‹</button>
       <button onclick="state.currentYear++;renderDashboard();" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--t1);font-size:18px;cursor:pointer;">›</button>
     </div>
     <div class="summary-card">
-      <div class="summary-label">Total ${state.currentYear}</div>
-      <div class="summary-amount">${fmt(totalY)}</div>
+      <div class="summary-label">${netY >= 0 ? 'You receive' : 'You owe'} · ${state.currentYear}</div>
+      <div class="summary-amount" style="color:${netColorY};">${fmt(Math.abs(netY))}</div>
       <div class="summary-split">
+        <div class="split-item"><span class="split-lbl">${getUserLabel(otherRoleY)} owes you</span><span class="split-val text-green">${fmt(owedMeY)}</span></div>
+        <div class="split-item"><span class="split-lbl">You owe ${getUserLabel(otherRoleY)}</span><span class="split-val text-red">${fmt(iOweY)}</span></div>
         <div class="split-item"><span class="split-lbl">Paid back</span><span class="split-val text-green">${fmt(paidY)}</span></div>
-        <div class="split-item"><span class="split-lbl">Still open</span><span class="split-val text-red">${fmt(totalY - paidY)}</span></div>
       </div>
     </div>
     <div class="section-label">Monthly breakdown</div>
@@ -654,7 +737,7 @@ function debtCardHTML(debt) {
       <div class="debt-card-header">
         <div>
           <div class="debt-title">${esc(debt.description)}</div>
-          <div class="debt-date">${fmtDate(debt.date)} · ${debt.debtor === 'ingmar' ? 'Ingmar → Nadia' : 'Nadia → Ingmar'}</div>
+          <div class="debt-date">${fmtDate(debt.date)} · ${debtorLabel(debt)}</div>
         </div>
         <div>
           <div class="debt-amount ${settled ? 'settled' : ''}">${settled ? 'Settled' : fmt(remaining + interest)}</div>
@@ -689,7 +772,7 @@ function renderPayments() {
       <div class="card">
         <div class="flex-between">
           <div>
-            <div style="font-size:15px;font-weight:600;">${p.payer === 'ingmar' ? 'Ingmar' : 'Nadia'} paid</div>
+            <div style="font-size:15px;font-weight:600;">${payerLabel(p.payer)} paid</div>
             <div style="font-size:11px;color:var(--t3);margin-top:2px;">${fmtDate(p.date)}${p.notes ? ' · ' + esc(p.notes) : ''}</div>
           </div>
           <div style="font-size:20px;font-weight:700;color:var(--green);">${fmt(p.amount)}</div>
@@ -831,7 +914,7 @@ function renderSettings() {
     <div class="card" style="margin-bottom:10px;">
       <div style="font-size:13px;color:var(--t2);margin-bottom:4px;">Logged in as</div>
       <div style="font-size:17px;font-weight:600;">${state.profile?.name || '—'}</div>
-      <div style="font-size:12px;color:var(--t3);">${state.user?.email || ''} · ${isAdmin?'Admin (Nadia)':'User (Ingmar)'}</div>
+      <div style="font-size:12px;color:var(--t3);">${state.user?.email || ''} · ${isAdmin?'Admin':'User'}</div>
     </div>
     <div class="card" style="margin-bottom:10px;">
       <div style="font-size:13px;color:var(--t2);margin-bottom:4px;">Default interest rate</div>
@@ -839,7 +922,7 @@ function renderSettings() {
         <input id="rate-input" class="form-input" type="number" step="0.1" value="6" style="width:100px;" />
         <span style="font-size:14px;color:var(--t2);">% per year</span>
       </div>
-      <div style="font-size:11px;color:var(--t3);margin-top:6px;">Applied to new Ingmar debts · overridable per debt</div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px;">Applied to new debts · overridable per entry</div>
     </div>
     <div class="card" style="margin-bottom:20px;">
       <div class="flex-between">
@@ -885,7 +968,7 @@ function openDebtDetail(id) {
           <div class="modal-title" style="margin-bottom:0;">${esc(debt.description)}</div>
           ${isAdmin?`<button onclick="deleteDebt('${id}')" style="background:none;border:none;color:var(--red);font-size:22px;cursor:pointer;">🗑</button>`:''}
         </div>
-        <div style="font-size:13px;color:var(--t2);margin-bottom:20px;">${fmtDate(debt.date)} · ${debt.debtor==='ingmar'?'Ingmar → Nadia':'Nadia → Ingmar'}${debt.applies_interest?` · ${(Number(debt.interest_rate)*100).toFixed(1)}% p.a.`:' · No interest'}</div>
+        <div style="font-size:13px;color:var(--t2);margin-bottom:20px;">${fmtDate(debt.date)} · ${debtorLabel(debt)}${debt.applies_interest?` · ${(Number(debt.interest_rate)*100).toFixed(1)}% p.a.`:' · No interest'}</div>
 
         <div class="breakdown-grid">
           <div class="breakdown-cell"><div class="breakdown-cell-label">Remaining</div><div class="breakdown-cell-val text-red">${fmt(remaining)}</div></div>
@@ -910,7 +993,7 @@ function openDebtDetail(id) {
               <div class="timeline-content">
                 <div class="flex-between">
                   <div>
-                    <div class="timeline-title">${a.payment?.payer==='ingmar'?'Ingmar':'Nadia'} paid</div>
+                    <div class="timeline-title">${payerLabel(a.payment?.payer)} paid</div>
                     <div class="timeline-sub">${fmtDate(a.payment?.date)}</div>
                     <div style="font-size:11px;color:var(--t3);margin-top:2px;">
                       ${Number(a.interest_paid)>0?`${fmt(a.interest_paid)} interest · `:''}${fmt(a.capital_paid)} capital
@@ -945,7 +1028,7 @@ function showAddDebt() {
       <div class="modal">
         <div class="modal-handle"></div>
         <div class="modal-title">Add debt</div>
-        <div class="info-note" id="debt-note">⚡ Interest applies · Ingmar is debtor · ${defaultRate}% p.a.</div>
+        <div class="info-note" id="debt-note">⚡ Interest applies · ${getUserLabel('user1')} is debtor · ${defaultRate}% p.a.</div>
 
         <div class="form-field">
           <label class="form-label">Description</label>
@@ -967,8 +1050,8 @@ function showAddDebt() {
         <div class="form-field">
           <label class="form-label">Debtor</label>
           <div class="pill-row">
-            <button class="pill active" id="debtor-ingmar" onclick="setDebtor('ingmar')">Ingmar owes Nadia</button>
-            <button class="pill" id="debtor-nadia" onclick="setDebtor('nadia')">Nadia owes Ingmar</button>
+            <button class="pill active" id="debtor-user1" onclick="setDebtor('user1')">${getUserLabel('user1')} owes ${getUserLabel('user2')}</button>
+            <button class="pill" id="debtor-user2" onclick="setDebtor('user2')">${getUserLabel('user2')} owes ${getUserLabel('user1')}</button>
           </div>
         </div>` : ''}
 
@@ -1024,18 +1107,20 @@ function showAddDebt() {
       </div>
     </div>`;
   showModal(html);
-  window._debtForm = { debtor: 'ingmar', split: 'full', recurring: null };
+  window._debtForm = { debtor: 'user1', split: 'full', recurring: null };
 }
 
 function setDebtor(who) {
   window._debtForm.debtor = who;
-  document.getElementById('debtor-ingmar')?.classList.toggle('active', who==='ingmar');
-  document.getElementById('debtor-nadia')?.classList.toggle('active', who==='nadia');
-  const applyInterest = who === 'ingmar';
+  document.getElementById('debtor-user1')?.classList.toggle('active', who==='user1');
+  document.getElementById('debtor-user2')?.classList.toggle('active', who==='user2');
+  const applyInterest = who === 'user1'; // user1 = the one who pays interest (set in Supabase)
   document.getElementById('rate-field').style.display = applyInterest ? 'block' : 'none';
+  const u1 = getUserLabel('user1');
+  const u2 = getUserLabel('user2');
   document.getElementById('debt-note').textContent = applyInterest
-    ? `⚡ Interest applies · Ingmar is debtor · ${document.getElementById('d-rate')?.value||6}% p.a.`
-    : `ℹ️ No interest · Nadia is debtor`;
+    ? `⚡ Interest applies · ${u1} is debtor · ${document.getElementById('d-rate')?.value||6}% p.a.`
+    : `ℹ️ No interest · ${u2} is debtor`;
   updateSplitPreview();
 }
 
@@ -1086,10 +1171,12 @@ async function submitDebt() {
   const { debtor, split, recurring } = window._debtForm;
 
   if (!desc || !amount || !date) return showToast('Please fill in all fields');
+  if (amount <= 0) return showToast('Amount must be greater than 0');
+  if (rate < 0 || rate > 1) return showToast('Interest rate must be between 0% and 100%');
 
   const isAdmin = state.profile?.role === 'admin';
-  const creditor = debtor === 'ingmar' ? 'nadia' : 'ingmar';
-  const appliesInterest = debtor === 'ingmar';
+  const creditor = debtor === 'user1' ? 'user2' : 'user1';
+  const appliesInterest = debtor === 'user1'; // user1 pays interest, user2 never does
   const originalAmount = amount;
   const debtAmount = split === 'split' ? Math.round(amount / 2 * 100) / 100 : amount;
 
@@ -1131,8 +1218,8 @@ function showAddPayment() {
         <div class="form-field">
           <label class="form-label">Who paid?</label>
           <div class="pill-row">
-            <button class="pill active" id="payer-ingmar" onclick="setPayer('ingmar')">Ingmar</button>
-            <button class="pill" id="payer-nadia" onclick="setPayer('nadia')">Nadia</button>
+            <button class="pill active" id="payer-user1" onclick="setPayer('user1')">${getUserLabel('user1')}</button>
+            <button class="pill" id="payer-user2" onclick="setPayer('user2')">${getUserLabel('user2')}</button>
           </div>
         </div>` : ''}
 
@@ -1158,12 +1245,12 @@ function showAddPayment() {
       </div>
     </div>`;
   showModal(html);
-  window._paymentForm = { payer: state.profile?.name?.toLowerCase() === 'ingmar' ? 'ingmar' : 'ingmar' };
+  window._paymentForm = { payer: 'user1' }; // default: user1 (debtor) is the payer
 }
 
 function setPayer(who) {
   window._paymentForm.payer = who;
-  ['ingmar','nadia'].forEach(p => document.getElementById(`payer-${p}`)?.classList.toggle('active', p===who));
+  ['user1','user2'].forEach(p => document.getElementById(`payer-${p}`)?.classList.toggle('active', p===who));
   updateAllocPreview();
 }
 
@@ -1171,7 +1258,7 @@ function updateAllocPreview() {
   const amt = parseFloat(document.getElementById('p-amount')?.value) || 0;
   const preview = document.getElementById('alloc-preview');
   if (!preview || amt <= 0) { if (preview) preview.innerHTML = ''; return; }
-  const payer = window._paymentForm?.payer || 'ingmar';
+  const payer = window._paymentForm?.payer || 'user1';
   const { allocations, surplus } = simulateAllocation(amt, payer);
   const totalI = allocations.reduce((s,a) => s+a.interestPaid, 0);
   const totalC = allocations.reduce((s,a) => s+a.capitalPaid, 0);
@@ -1209,8 +1296,9 @@ async function submitPayment() {
   const amount = parseFloat(document.getElementById('p-amount').value);
   const date = document.getElementById('p-date').value;
   const notes = document.getElementById('p-notes').value.trim();
-  const payer = window._paymentForm?.payer || 'ingmar';
+  const payer = window._paymentForm?.payer || 'user1';
   if (!amount || !date) return showToast('Please fill in all fields');
+  if (amount <= 0) return showToast('Amount must be greater than 0');
 
   document.getElementById('add-payment-btn').textContent = 'Saving…';
   const { allocations } = simulateAllocation(amount, payer);
@@ -1266,7 +1354,7 @@ async function sendNotification(type, data) {
     payment_added: { title: 'Payment confirmed ✅', body: `${fmt(data.amount)} recorded` },
   };
   const n = notifs[type];
-  if (n) new Notification(n.title, { body: n.body, icon: '/icon-192.png' });
+  if (n) new Notification(n.title, { body: n.body, icon: '/owed/icons/icon-192.png' });
 }
 
 // Monthly reminder via Service Worker (registered separately)
@@ -1278,7 +1366,7 @@ function exportCSV() {
   const rows = [['ID','Description','Debtor','Creditor','Amount','Date','Interest Rate','Split','Recurring','Settled','Remaining Capital','Accrued Interest']];
   state.debts.filter(d => !d.is_template).forEach(d => {
     rows.push([
-      d.id, d.description, d.debtor, d.creditor, d.amount, d.date,
+      d.id, d.description, getUserLabel(d.debtor), getUserLabel(d.creditor), d.amount, d.date,
       (Number(d.interest_rate)*100).toFixed(2)+'%', d.split_type, d.recurring||'',
       isSettled(d)?'Yes':'No', calcRemainingCapital(d), calcAccruedInterest(d)
     ]);
@@ -1345,9 +1433,23 @@ async function checkRecurring() {
   const templates = state.debts.filter(d => d.is_template && d.recurring);
   const todayStr = today();
   const todayDate = new Date(todayStr);
-  if (todayDate.getDate() !== 1) return; // only run on 1st of month
+  const dayOfMonth = todayDate.getDate();
+  const month = todayDate.getMonth(); // 0-11
+  if (dayOfMonth !== 1) return; // only run on 1st of period
 
   for (const t of templates) {
+    // Check if should fire this month based on recurrence
+    let shouldFire = false;
+    if (t.recurring === 'monthly') {
+      shouldFire = true;
+    } else if (t.recurring === 'quarterly') {
+      shouldFire = month % 3 === 0; // Jan(0), Apr(3), Jul(6), Oct(9)
+    } else if (t.recurring === 'yearly') {
+      const startMonth = new Date(t.date).getMonth();
+      shouldFire = month === startMonth;
+    }
+    if (!shouldFire) continue;
+
     // Check if already created for this period
     const existing = state.debts.find(d =>
       d.recurring_parent_id === t.id &&
@@ -1355,7 +1457,9 @@ async function checkRecurring() {
     );
     if (existing) continue;
 
-    // Create new instance
+    // Validate amount > 0
+    if (!t.amount || Number(t.amount) <= 0) continue;
+
     await sb.from('debts').insert({
       created_by: t.created_by,
       debtor: t.debtor, creditor: t.creditor,
@@ -1377,7 +1481,7 @@ async function checkRecurring() {
 // Register Service Worker
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(console.error);
+    navigator.serviceWorker.register("/owed/sw.js").catch(console.error);
   });
 }
 

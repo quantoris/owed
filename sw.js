@@ -4,7 +4,7 @@
 // ============================================================
 
 const CACHE_NAME = 'owed-v1';
-const ASSETS = ['/', '/index.html', '/manifest.json'];
+const ASSETS = ['/owed/', '/owed/index.html', '/owed/manifest.json', '/owed/sw.js'];
 
 // ── Install: cache core assets ──────────────────────────────
 self.addEventListener('install', e => {
@@ -51,8 +51,8 @@ self.addEventListener('push', e => {
   e.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-96.png',
+      icon: '/owed/icons/icon-192.png',
+      badge: '/owed/icons/icon-96.png',
       tag: payload.tag || 'owed-notification',
       data: payload.data || {},
       vibrate: [100, 50, 100],
@@ -70,7 +70,7 @@ self.addEventListener('notificationclick', e => {
           return client.focus();
         }
       }
-      return clients.openWindow('/');
+      return clients.openWindow('/owed/');
     })
   );
 });
@@ -94,8 +94,8 @@ async function checkMonthlyReminder() {
 
   await self.registration.showNotification('A new month has begun 😉💸', {
     body: 'New payments are expected',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-96.png',
+    icon: '/owed/icons/icon-192.png',
+    badge: '/owed/icons/icon-96.png',
     tag: 'monthly-reminder',
     vibrate: [100, 50, 100],
   });
