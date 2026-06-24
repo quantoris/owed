@@ -356,17 +356,35 @@ let state = {
 // INIT
 // ============================================================
 async function init() {
-  const { data: { session } } = await sb.auth.getSession();
-  if (session) {
-    state.user = session.user;
-    await ensureProfile();  // creates profile if first login
-    await loadProfile();
-    await loadData();
-    showApp();
-  } else {
+  // Safety timeout: if loading takes > 8 seconds, show auth screen
+  const loadingTimeout = setTimeout(() => {
+    document.getElementById('loading').style.display = 'none';
     showAuth();
+  }, 8000);
+
+  try {
+    const { data: { session }, error } = await sb.auth.getSession();
+    if (error) throw error;
+
+    if (session) {
+      state.user = session.user;
+      await ensureProfile();
+      await loadProfile();
+      await loadData();
+      clearTimeout(loadingTimeout);
+      showApp();
+    } else {
+      clearTimeout(loadingTimeout);
+      showAuth();
+    }
+  } catch (err) {
+    console.error('Init error:', err);
+    clearTimeout(loadingTimeout);
+    showAuth();
+    showToast('Connection error – please try again');
+  } finally {
+    document.getElementById('loading').style.display = 'none';
   }
-  document.getElementById('loading').style.display = 'none';
 }
 
 async function loadProfile() {
@@ -435,7 +453,11 @@ async function ensureProfile() {
       name: displayName,
       role: 'user',
     });
-    if (insertError) console.error('Profile insert error:', insertError);
+    if (insertError) {
+      console.error('Profile insert error:', insertError);
+      showToast('Error creating profile: ' + insertError.message);
+      return;
+    }
     await loadProfile();
   } else {
     state.profile = data;
