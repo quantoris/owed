@@ -5,21 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Owed</title>
   <script>
-    // GitHub Pages SPA redirect fix
-    // Captures the full URL including auth tokens and redirects to index.html
-    const url = window.location.href;
+    // GitHub Pages SPA + Supabase Auth redirect fix
+    // Supabase sends: https://quantoris.github.io/owed?code=xxx or #access_token=xxx
+    // GitHub Pages 404s on unknown paths → this file catches it and redirects correctly
     const search = window.location.search;
     const hash = window.location.hash;
-    
-    // Store the path so index.html can pick it up
-    sessionStorage.setItem('spa_redirect', search + hash);
-    
-    // Redirect to root
-    window.location.replace(
-      window.location.origin + '/owed/' +
-      (search ? '?' + search.slice(1) : '') +
-      hash
-    );
+    // Pass full query + hash to index.html
+    window.location.replace('https://quantoris.github.io/owed/' + search + hash);
   </script>
 </head>
 <body style="background:#0A0A0F;color:#A78BFA;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;">

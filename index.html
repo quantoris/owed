@@ -327,7 +327,12 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const DEFAULT_RATE = 0.06;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: 'pkce',  // required for Magic Link on GitHub Pages
+  }
 });
 
 // ============================================================
@@ -421,18 +426,22 @@ sb.auth.onAuthStateChange(async (event, session) => {
 async function ensureProfile() {
   const { data } = await sb.from('profiles').select('*').eq('id', state.user.id).single();
   if (!data) {
-    // First login: determine role by email
     // First login: ask user for their display name
-    // Role must be set manually in Supabase dashboard after first login
+    // Role must be set manually in Supabase dashboard after first login (admin vs user)
     const displayName = prompt('Welcome to Owed!\nWhat is your name?')?.trim() || 'User';
-    await sb.from('profiles').insert({
+    const { error: insertError } = await sb.from('profiles').insert({
       id: state.user.id,
       name: displayName,
       role: 'user',
     });
+    if (insertError) console.error('Profile insert error:', insertError);
     await loadProfile();
   } else {
     state.profile = data;
+    // Also load all profiles for label resolution
+    const { data: allProfiles } = await sb.from('profiles').select('*');
+    state.profiles = {};
+    (allProfiles || []).forEach(p => { state.profiles[p.id] = p; });
   }
 }
 
@@ -525,13 +534,15 @@ function simulateAllocation(amount, payer) {
 // Names come from profiles table, set by each user on first login
 // ============================================================
 function getUserLabel(role) {
+  const profiles = Object.values(state.profiles || {});
   if (role === 'user1') {
-    const p = Object.values(state.profiles || {}).find(p => p.role === 'user');
+    const p = profiles.find(p => p.role === 'user');
     return p?.name || 'User 1';
-  } else {
-    const p = Object.values(state.profiles || {}).find(p => p.role === 'admin');
+  } else if (role === 'user2') {
+    const p = profiles.find(p => p.role === 'admin');
     return p?.name || 'User 2';
   }
+  return role || 'Unknown';
 }
 
 function debtorLabel(debt) {
@@ -658,8 +669,12 @@ function renderDashYear(el) {
   }));
 
   let totalY = 0, paidY = 0;
-  state.debts.filter(d => new Date(d.date).getFullYear() === state.currentYear && !d.is_template)
-    .forEach(d => { totalY += Number(d.amount); paidY += Number(d.amount) - calcRemainingCapital(d); });
+  state.debts
+    .filter(d => new Date(d.date).getFullYear() === state.currentYear && !d.is_template)
+    .forEach(d => {
+      totalY += Number(d.amount);
+      paidY += Math.max(0, Number(d.amount) - calcRemainingCapital(d));
+    });
 
   const barsHTML = months.map((m, i) => {
     const amt = state.debts.filter(d => {
@@ -1307,7 +1322,11 @@ async function submitPayment() {
     created_by: state.user.id, payer, amount, date, notes: notes || null
   }).select().single();
 
-  if (pErr) { showToast('Error: ' + pErr.message); return; }
+  if (pErr) {
+    showToast('Error: ' + pErr.message);
+    document.getElementById('add-payment-btn').textContent = 'Confirm payment';
+    return;
+  }
 
   if (allocations.length) {
     await sb.from('payment_allocations').insert(
@@ -1330,9 +1349,11 @@ async function submitPayment() {
 // DELETE
 // ============================================================
 async function deleteDebt(id) {
-  if (!confirm('Delete this debt and all its payment records?')) return;
-  await sb.from('payment_allocations').delete().eq('debt_id', id);
-  await sb.from('debts').delete().eq('id', id);
+  if (!confirm('Delete this debt entry? Payment records will be kept but unlinked.')) return;
+  const { error: allocError } = await sb.from('payment_allocations').delete().eq('debt_id', id);
+  if (allocError) { showToast('Error deleting records'); return; }
+  const { error: debtError } = await sb.from('debts').delete().eq('id', id);
+  if (debtError) { showToast('Error deleting debt'); return; }
   closeModal();
   await loadData();
   showToast('Deleted ✓');
