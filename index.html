@@ -359,6 +359,7 @@ async function init() {
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     state.user = session.user;
+    await ensureProfile();  // creates profile if first login
     await loadProfile();
     await loadData();
     showApp();
