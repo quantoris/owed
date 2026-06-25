@@ -331,7 +331,8 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    flowType: 'pkce',  // required for Magic Link on GitHub Pages
+    flowType: 'implicit', // implicit flow works correctly with GitHub Pages
+    storage: window.localStorage,
   }
 });
 
@@ -358,25 +359,20 @@ let state = {
 async function init() {
   const loadingEl = document.getElementById('loading');
 
-  // Safety timeout: never hang forever
+  // With implicit flow, Supabase puts tokens in URL hash (#access_token=...)
+  // detectSessionInUrl:true handles this automatically on getSession()
+  // We just need to wait for it
+
   const loadingTimeout = setTimeout(() => {
     loadingEl.style.display = 'none';
     showAuth();
-  }, 10000);
+  }, 12000);
 
   try {
-    // Handle PKCE callback from Magic Link
-    // Supabase JS v2 with detectSessionInUrl:true handles this automatically
-    // but we need to wait for it to complete
+    // This call automatically exchanges the hash tokens if present
     const { data: { session }, error } = await sb.auth.getSession();
 
-    if (error) {
-      console.error('Session error:', error);
-      clearTimeout(loadingTimeout);
-      loadingEl.style.display = 'none';
-      showAuth();
-      return;
-    }
+    if (error) throw error;
 
     if (session) {
       state.user = session.user;
@@ -385,6 +381,10 @@ async function init() {
       await loadData();
       clearTimeout(loadingTimeout);
       loadingEl.style.display = 'none';
+      // Clean up URL hash after successful auth
+      if (window.location.hash.includes('access_token')) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
       showApp();
     } else {
       clearTimeout(loadingTimeout);
@@ -442,16 +442,17 @@ async function sendMagicLink() {
 }
 
 sb.auth.onAuthStateChange(async (event, session) => {
-  if (event === 'SIGNED_IN' && session) {
-    // Only handle if init() hasn't already handled this session
-    if (!state.user) {
-      state.user = session.user;
-      await ensureProfile();
-      await loadProfile();
-      await loadData();
-      document.getElementById('loading').style.display = 'none';
-      showApp();
+  if (event === 'SIGNED_IN' && session && !state.user) {
+    // Only fires if init() didn't already handle the session
+    state.user = session.user;
+    await ensureProfile();
+    await loadProfile();
+    await loadData();
+    document.getElementById('loading').style.display = 'none';
+    if (window.location.hash.includes('access_token')) {
+      window.history.replaceState(null, '', window.location.pathname);
     }
+    showApp();
   } else if (event === 'SIGNED_OUT') {
     state.user = null;
     state.profile = null;
