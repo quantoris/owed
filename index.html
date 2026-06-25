@@ -356,15 +356,27 @@ let state = {
 // INIT
 // ============================================================
 async function init() {
-  // Safety timeout: if loading takes > 8 seconds, show auth screen
+  const loadingEl = document.getElementById('loading');
+
+  // Safety timeout: never hang forever
   const loadingTimeout = setTimeout(() => {
-    document.getElementById('loading').style.display = 'none';
+    loadingEl.style.display = 'none';
     showAuth();
-  }, 8000);
+  }, 10000);
 
   try {
+    // Handle PKCE callback from Magic Link
+    // Supabase JS v2 with detectSessionInUrl:true handles this automatically
+    // but we need to wait for it to complete
     const { data: { session }, error } = await sb.auth.getSession();
-    if (error) throw error;
+
+    if (error) {
+      console.error('Session error:', error);
+      clearTimeout(loadingTimeout);
+      loadingEl.style.display = 'none';
+      showAuth();
+      return;
+    }
 
     if (session) {
       state.user = session.user;
@@ -372,25 +384,25 @@ async function init() {
       await loadProfile();
       await loadData();
       clearTimeout(loadingTimeout);
+      loadingEl.style.display = 'none';
       showApp();
     } else {
       clearTimeout(loadingTimeout);
+      loadingEl.style.display = 'none';
       showAuth();
     }
   } catch (err) {
     console.error('Init error:', err);
     clearTimeout(loadingTimeout);
+    loadingEl.style.display = 'none';
     showAuth();
-    showToast('Connection error – please try again');
-  } finally {
-    document.getElementById('loading').style.display = 'none';
   }
 }
 
 async function loadProfile() {
-  const { data } = await sb.from('profiles').select('*').eq('id', state.user.id).single();
-  state.profile = data;
-  // Load all profiles for label resolution
+  const { data: profile } = await sb.from('profiles').select('*').eq('id', state.user.id).single();
+  if (profile) state.profile = profile;
+  // Load all profiles for name label resolution
   const { data: allProfiles } = await sb.from('profiles').select('*');
   state.profiles = {};
   (allProfiles || []).forEach(p => { state.profiles[p.id] = p; });
@@ -431,40 +443,64 @@ async function sendMagicLink() {
 
 sb.auth.onAuthStateChange(async (event, session) => {
   if (event === 'SIGNED_IN' && session) {
-    state.user = session.user;
-    await ensureProfile();
-    await loadData();
-    showApp();
+    // Only handle if init() hasn't already handled this session
+    if (!state.user) {
+      state.user = session.user;
+      await ensureProfile();
+      await loadProfile();
+      await loadData();
+      document.getElementById('loading').style.display = 'none';
+      showApp();
+    }
   } else if (event === 'SIGNED_OUT') {
     state.user = null;
     state.profile = null;
+    state.profiles = {};
+    state.debts = [];
+    state.payments = [];
+    state.allocations = [];
     showAuth();
+  } else if (event === 'TOKEN_REFRESHED' && session) {
+    state.user = session.user;
   }
 });
 
 async function ensureProfile() {
-  const { data } = await sb.from('profiles').select('*').eq('id', state.user.id).single();
-  if (!data) {
-    // First login: ask user for their display name
-    // Role must be set manually in Supabase dashboard after first login (admin vs user)
-    const displayName = prompt('Welcome to Owed!\nWhat is your name?')?.trim() || 'User';
-    const { error: insertError } = await sb.from('profiles').insert({
+  // Fetch existing profile – use .select() with array result to avoid errors when not found
+  const { data: profiles, error: fetchError } = await sb.from('profiles')
+    .select('*')
+    .eq('id', state.user.id)
+    .limit(1);
+
+  if (fetchError) {
+    console.error('Profile fetch error:', fetchError);
+    return;
+  }
+
+  const existing = profiles && profiles.length > 0 ? profiles[0] : null;
+
+  if (!existing) {
+    // First login only: ask for display name
+    const displayName = prompt('Welcome to Owed!\nWhat is your name?')?.trim();
+    if (!displayName) {
+      await sb.auth.signOut();
+      showAuth();
+      return;
+    }
+    const { data: inserted, error: insertError } = await sb.from('profiles').insert({
       id: state.user.id,
       name: displayName,
       role: 'user',
-    });
+    }).select().single();
+
     if (insertError) {
       console.error('Profile insert error:', insertError);
-      showToast('Error creating profile: ' + insertError.message);
+      showToast('Setup error: ' + insertError.message);
       return;
     }
-    await loadProfile();
+    state.profile = inserted;
   } else {
-    state.profile = data;
-    // Also load all profiles for label resolution
-    const { data: allProfiles } = await sb.from('profiles').select('*');
-    state.profiles = {};
-    (allProfiles || []).forEach(p => { state.profiles[p.id] = p; });
+    state.profile = existing;
   }
 }
 
