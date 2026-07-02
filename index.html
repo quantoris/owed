@@ -346,6 +346,7 @@ let state = {
   debts: [],
   payments: [],
   allocations: [],
+  _loadingTimeout: null,
   dashView: 'month',
   currentMonth: new Date().getMonth(),
   currentYear: new Date().getFullYear(),
@@ -357,46 +358,12 @@ let state = {
 // INIT
 // ============================================================
 async function init() {
-  const loadingEl = document.getElementById('loading');
-
-  // With implicit flow, Supabase puts tokens in URL hash (#access_token=...)
-  // detectSessionInUrl:true handles this automatically on getSession()
-  // We just need to wait for it
-
-  const loadingTimeout = setTimeout(() => {
-    loadingEl.style.display = 'none';
+  // onAuthStateChange is the single source of truth for auth state.
+  // init() only sets a safety timeout in case nothing fires.
+  state._loadingTimeout = setTimeout(() => {
+    document.getElementById('loading').style.display = 'none';
     showAuth();
   }, 12000);
-
-  try {
-    // This call automatically exchanges the hash tokens if present
-    const { data: { session }, error } = await sb.auth.getSession();
-
-    if (error) throw error;
-
-    if (session) {
-      state.user = session.user;
-      await ensureProfile();
-      await loadProfile();
-      await loadData();
-      clearTimeout(loadingTimeout);
-      loadingEl.style.display = 'none';
-      // Clean up URL hash after successful auth
-      if (window.location.hash.includes('access_token')) {
-        window.history.replaceState(null, '', window.location.pathname);
-      }
-      showApp();
-    } else {
-      clearTimeout(loadingTimeout);
-      loadingEl.style.display = 'none';
-      showAuth();
-    }
-  } catch (err) {
-    console.error('Init error:', err);
-    clearTimeout(loadingTimeout);
-    loadingEl.style.display = 'none';
-    showAuth();
-  }
 }
 
 async function loadProfile() {
@@ -442,25 +409,57 @@ async function sendMagicLink() {
 }
 
 sb.auth.onAuthStateChange(async (event, session) => {
-  if (event === 'SIGNED_IN' && session && !state.user) {
-    // Only fires if init() didn't already handle the session
-    state.user = session.user;
-    await ensureProfile();
-    await loadProfile();
-    await loadData();
-    document.getElementById('loading').style.display = 'none';
-    if (window.location.hash.includes('access_token')) {
-      window.history.replaceState(null, '', window.location.pathname);
+  const loadingEl = document.getElementById('loading');
+
+  if (event === 'INITIAL_SESSION') {
+    // Fires on every page load - session is either existing or null
+    if (session) {
+      // Existing session - log user in
+      if (state.user && state.user.id === session.user.id) return; // already handled
+      state.user = session.user;
+      try {
+        await ensureProfile();
+        if (!state.profile) { await sb.auth.signOut(); return; }
+        await loadProfile();
+        await loadData();
+      } catch(e) { console.error(e); await sb.auth.signOut(); return; }
+      clearTimeout(state._loadingTimeout);
+      loadingEl.style.display = 'none';
+      if (window.location.hash) window.history.replaceState(null,'',window.location.pathname);
+      showApp();
+    } else {
+      // No session - show login
+      clearTimeout(state._loadingTimeout);
+      loadingEl.style.display = 'none';
+      showAuth();
     }
+
+  } else if (event === 'SIGNED_IN' && session) {
+    // Fires after magic link click - new login
+    if (state.user && state.user.id === session.user.id) return; // already handled by INITIAL_SESSION
+    state.user = session.user;
+    try {
+      await ensureProfile();
+      if (!state.profile) { await sb.auth.signOut(); return; }
+      await loadProfile();
+      await loadData();
+    } catch(e) { console.error(e); loadingEl.style.display='none'; showAuth(); return; }
+    clearTimeout(state._loadingTimeout);
+    loadingEl.style.display = 'none';
+    if (window.location.hash) window.history.replaceState(null,'',window.location.pathname);
     showApp();
+
   } else if (event === 'SIGNED_OUT') {
+    clearTimeout(state._loadingTimeout);
     state.user = null;
     state.profile = null;
     state.profiles = {};
     state.debts = [];
     state.payments = [];
     state.allocations = [];
+    loadingEl.style.display = 'none';
     showAuth();
+
   } else if (event === 'TOKEN_REFRESHED' && session) {
     state.user = session.user;
   }
@@ -1453,7 +1452,8 @@ function exportCSV() {
     ]);
   });
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `owed-export-${today()}.csv`;
