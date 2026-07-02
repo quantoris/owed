@@ -229,12 +229,24 @@
     <div class="auth-logo">Owed</div>
     <div class="auth-tagline">Track what's owed, effortlessly.</div>
     <div class="auth-form">
-      <div class="form-field">
-        <label class="form-label">Your email</label>
-        <input id="auth-email" class="form-input" type="email" placeholder="you@example.com" inputmode="email" autocomplete="email" />
+      <!-- Step 1: Email -->
+      <div id="auth-step-email">
+        <div class="form-field">
+          <label class="form-label">Your email</label>
+          <input id="auth-email" class="form-input" type="email" placeholder="you@example.com" inputmode="email" autocomplete="email" />
+        </div>
+        <button class="btn-primary" id="auth-btn" onclick="sendOTP()">Send code</button>
       </div>
-      <button class="btn-primary" id="auth-btn" onclick="sendMagicLink()">Send magic link</button>
-      <div id="auth-msg" style="font-size:13px;color:var(--t2);text-align:center;display:none;"></div>
+      <!-- Step 2: OTP Code -->
+      <div id="auth-step-otp" style="display:none;">
+        <div class="form-field">
+          <label class="form-label">Enter the 6-digit code from your email</label>
+          <input id="auth-otp" class="form-input" type="number" inputmode="numeric" placeholder="123456" style="font-size:28px;font-weight:700;letter-spacing:4px;text-align:center;" />
+        </div>
+        <button class="btn-primary" id="auth-verify-btn" onclick="verifyOTP()">Sign in</button>
+        <button class="btn-secondary" onclick="backToEmail()" style="margin-top:8px;">← Use different email</button>
+      </div>
+      <div id="auth-msg" style="font-size:13px;color:var(--t2);text-align:center;margin-top:8px;display:none;"></div>
     </div>
   </div>
 
@@ -330,8 +342,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true,
-    flowType: 'pkce',
+    detectSessionInUrl: false,
     storage: window.localStorage,
   }
 });
@@ -390,22 +401,52 @@ async function loadData() {
 // ============================================================
 // AUTH
 // ============================================================
-async function sendMagicLink() {
+async function sendOTP() {
   const email = document.getElementById('auth-email').value.trim().toLowerCase();
   if (!email) return showToast('Please enter your email');
   document.getElementById('auth-btn').textContent = 'Sending…';
-  // shouldCreateUser: false means only pre-approved emails get a magic link
   const { error } = await sb.auth.signInWithOtp({
     email,
     options: {
       shouldCreateUser: false,
-      emailRedirectTo: 'https://quantoris.github.io/owed/index.html',
     }
   });
-  document.getElementById('auth-btn').textContent = 'Send magic link';
+  document.getElementById('auth-btn').textContent = 'Send code';
   const msg = document.getElementById('auth-msg');
   msg.style.display = 'block';
-  msg.textContent = error ? `Error: ${error.message}` : '✉️ Check your email for the magic link!';
+  if (error) {
+    msg.textContent = 'Error: ' + error.message;
+  } else {
+    msg.textContent = '✉️ Check your email for the 6-digit code';
+    document.getElementById('auth-step-email').style.display = 'none';
+    document.getElementById('auth-step-otp').style.display = 'block';
+    document.getElementById('auth-otp').focus();
+  }
+}
+
+async function verifyOTP() {
+  const email = document.getElementById('auth-email').value.trim().toLowerCase();
+  const token = document.getElementById('auth-otp').value.trim();
+  if (!token || token.length !== 6) return showToast('Please enter the 6-digit code');
+  document.getElementById('auth-verify-btn').textContent = 'Signing in…';
+  const { error } = await sb.auth.verifyOtp({
+    email,
+    token,
+    type: 'email',
+  });
+  document.getElementById('auth-verify-btn').textContent = 'Sign in';
+  if (error) {
+    document.getElementById('auth-msg').textContent = 'Invalid code: ' + error.message;
+    document.getElementById('auth-msg').style.display = 'block';
+  }
+  // On success, onAuthStateChange SIGNED_IN fires automatically
+}
+
+function backToEmail() {
+  document.getElementById('auth-step-email').style.display = 'block';
+  document.getElementById('auth-step-otp').style.display = 'none';
+  document.getElementById('auth-msg').style.display = 'none';
+  document.getElementById('auth-otp').value = '';
 }
 
 sb.auth.onAuthStateChange(async (event, session) => {
