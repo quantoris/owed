@@ -331,7 +331,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    flowType: 'implicit', // implicit flow works correctly with GitHub Pages
+    flowType: 'pkce',
     storage: window.localStorage,
   }
 });
@@ -399,7 +399,7 @@ async function sendMagicLink() {
     email,
     options: {
       shouldCreateUser: false,
-      emailRedirectTo: 'https://quantoris.github.io/owed/',
+      emailRedirectTo: 'https://quantoris.github.io/owed/index.html',
     }
   });
   document.getElementById('auth-btn').textContent = 'Send magic link';
@@ -411,44 +411,41 @@ async function sendMagicLink() {
 sb.auth.onAuthStateChange(async (event, session) => {
   const loadingEl = document.getElementById('loading');
 
-  if (event === 'INITIAL_SESSION') {
-    // Fires on every page load - session is either existing or null
-    if (session) {
-      // Existing session - log user in
-      if (state.user && state.user.id === session.user.id) return; // already handled
-      state.user = session.user;
-      try {
-        await ensureProfile();
-        if (!state.profile) { await sb.auth.signOut(); return; }
-        await loadProfile();
-        await loadData();
-      } catch(e) { console.error(e); await sb.auth.signOut(); return; }
+  async function handleSession(session) {
+    if (state.user && state.user.id === session.user.id) return;
+    state.user = session.user;
+    try {
+      await ensureProfile();
+      if (!state.profile) {
+        await sb.auth.signOut();
+        return;
+      }
+      await loadProfile();
+      await loadData();
       clearTimeout(state._loadingTimeout);
       loadingEl.style.display = 'none';
-      if (window.location.hash) window.history.replaceState(null,'',window.location.pathname);
+      if (window.location.hash) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
       showApp();
-    } else {
-      // No session - show login
+    } catch(e) {
+      console.error('Session handling error:', e);
       clearTimeout(state._loadingTimeout);
       loadingEl.style.display = 'none';
       showAuth();
     }
+  }
 
-  } else if (event === 'SIGNED_IN' && session) {
-    // Fires after magic link click - new login
-    if (state.user && state.user.id === session.user.id) return; // already handled by INITIAL_SESSION
-    state.user = session.user;
-    try {
-      await ensureProfile();
-      if (!state.profile) { await sb.auth.signOut(); return; }
-      await loadProfile();
-      await loadData();
-    } catch(e) { console.error(e); loadingEl.style.display='none'; showAuth(); return; }
-    clearTimeout(state._loadingTimeout);
-    loadingEl.style.display = 'none';
-    if (window.location.hash) window.history.replaceState(null,'',window.location.pathname);
-    showApp();
-
+  if (event === 'SIGNED_IN' && session) {
+    await handleSession(session);
+  } else if (event === 'INITIAL_SESSION') {
+    if (session) {
+      await handleSession(session);
+    } else {
+      clearTimeout(state._loadingTimeout);
+      loadingEl.style.display = 'none';
+      showAuth();
+    }
   } else if (event === 'SIGNED_OUT') {
     clearTimeout(state._loadingTimeout);
     state.user = null;
@@ -459,7 +456,6 @@ sb.auth.onAuthStateChange(async (event, session) => {
     state.allocations = [];
     loadingEl.style.display = 'none';
     showAuth();
-
   } else if (event === 'TOKEN_REFRESHED' && session) {
     state.user = session.user;
   }

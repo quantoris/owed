@@ -5,17 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Owed</title>
   <script>
-    // GitHub Pages SPA + Supabase Auth redirect fix
-    // Supabase sends: https://quantoris.github.io/owed?code=xxx or #access_token=xxx
-    // GitHub Pages 404s on unknown paths → this file catches it and redirects correctly
-    const search = window.location.search;
-    const hash = window.location.hash;
-    // Pass full query + hash to index.html
-    window.location.replace('https://quantoris.github.io/owed/' + search + hash);
+    // Supabase PKCE magic link sends ?code=xxx to this URL
+    // GitHub Pages 404s on it → this file catches and redirects to index.html
+    // preserving the full query string so Supabase JS can exchange the code
+    const params = window.location.search + window.location.hash;
+    window.location.replace('https://quantoris.github.io/owed/index.html' + params);
   </script>
 </head>
 <body style="background:#0A0A0F;color:#A78BFA;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;">
-  <div style="font-size:32px;font-weight:800;">Owed</div>
+  <div style="font-size:32px;font-weight:800;letter-spacing:-1px;">Owed</div>
   <div style="font-size:14px;color:#8A8A9A;">Redirecting…</div>
 </body>
 </html>
