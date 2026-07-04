@@ -237,6 +237,16 @@ let state = {
   expandedYears: new Set(), expandedMonths: new Set(),
 };
 
+// ── Handle PKCE code exchange on page load ───────────────────
+// When Supabase redirects back with ?code=xxx, we must call getSession()
+// to trigger the code exchange BEFORE onAuthStateChange fires
+(async () => {
+  if (window.location.search.includes('code=')) {
+    // Let Supabase JS exchange the code - this triggers SIGNED_IN event
+    await sb.auth.getSession();
+  }
+})();
+
 // ── Auth ──────────────────────────────────────────────────────
 async function sendLink() {
   const email = document.getElementById('auth-email').value.trim().toLowerCase();
