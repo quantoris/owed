@@ -223,7 +223,7 @@ const DEFAULT_RATE  = 0.06;
 
 // ── Supabase ──────────────────────────────────────────────────
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' }
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' }
 });
 
 // ── State ─────────────────────────────────────────────────────
@@ -236,16 +236,6 @@ let state = {
   currentYear:  new Date().getFullYear(),
   expandedYears: new Set(), expandedMonths: new Set(),
 };
-
-// ── Handle PKCE code exchange on page load ───────────────────
-// When Supabase redirects back with ?code=xxx, we must call getSession()
-// to trigger the code exchange BEFORE onAuthStateChange fires
-(async () => {
-  if (window.location.search.includes('code=')) {
-    // Let Supabase JS exchange the code - this triggers SIGNED_IN event
-    await sb.auth.getSession();
-  }
-})();
 
 // ── Auth ──────────────────────────────────────────────────────
 async function sendLink() {
