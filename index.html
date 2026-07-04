@@ -237,6 +237,29 @@ let state = {
   expandedYears: new Set(), expandedMonths: new Set(),
 };
 
+// ── Handle auth callback (works for both PKCE and implicit) ──
+(async () => {
+  const hash = window.location.hash;
+  const search = window.location.search;
+  
+  if (hash.includes('access_token=') || hash.includes('error=')) {
+    // Implicit flow - token is in hash, Supabase JS handles it automatically
+    return;
+  }
+  
+  if (search.includes('code=')) {
+    // PKCE flow - must exchange code for session explicitly
+    try {
+      const { data, error } = await sb.auth.exchangeCodeForSession(
+        window.location.href
+      );
+      if (error) console.error('Code exchange error:', error);
+    } catch(e) {
+      console.error('Exchange error:', e);
+    }
+  }
+})();
+
 // ── Auth ──────────────────────────────────────────────────────
 async function sendLink() {
   const email = document.getElementById('auth-email').value.trim().toLowerCase();
