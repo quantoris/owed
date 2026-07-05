@@ -316,14 +316,23 @@ async function bootApp() {
     let profile = rows && rows.length ? rows[0] : null;
     if (!profile) {
       const name = prompt('Welcome to Owed!\nWhat is your name?')?.trim() || 'User';
-      const { data: inserted } = await sb.from('profiles').insert({ id: state.user.id, name, role: 'user' }).select().single();
+      const { data: inserted, error: insertErr } = await sb.from('profiles')
+        .insert({ id: state.user.id, name, role: 'user' })
+        .select().single();
+      if (insertErr) {
+        showToast('Profile error: ' + insertErr.message);
+        console.error('Profile insert error:', insertErr);
+      }
       profile = inserted;
     }
     state.profile = profile;
-    // Load all profiles for name labels
+    // Load all profiles for name labels - keyed by both role AND id
     const { data: all } = await sb.from('profiles').select('*');
     state.profiles = {};
-    (all || []).forEach(p => { state.profiles[p.role] = p; });
+    (all || []).forEach(p => {
+      state.profiles[p.role] = p;  // getUserLabel uses role key
+      state.profiles[p.id]   = p;  // id-based lookups
+    });
     await loadData();
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
@@ -743,7 +752,7 @@ async function submitDebt() {
   const debtAmount = split==='split' ? Math.round(amount/2*100)/100 : amount;
   document.getElementById('add-debt-btn').textContent = 'Adding…';
   const {data,error} = await sb.from('debts').insert({
-    created_by: state.profile?.role||'user', debtor, creditor,
+    created_by: state.user?.id || state.profile?.id, debtor, creditor,
     description: desc, amount: debtAmount, original_amount: amount, split_type: split,
     interest_rate: appliesInterest?rate:0, applies_interest: appliesInterest,
     date, recurring: recurring||null, is_template: !!recurring, notes: notes||null,
