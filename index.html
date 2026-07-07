@@ -312,29 +312,40 @@ sb.auth.onAuthStateChange(async (event, session) => {
 async function bootApp() {
   try {
     // Load or create profile
-    // Use RPC function to get or create profile (bypasses RLS issues)
-    const name = localStorage.getItem('owed_display_name') || 
-                 prompt('Welcome to Owed!\nWhat is your name?')?.trim() || 'User';
-    localStorage.setItem('owed_display_name', name);
-    
-    const { data: profile, error: profileErr } = await sb.rpc('get_or_create_profile', {
-      user_id: state.user.id,
-      user_name: name,
-    });
-    
-    if (profileErr) {
-      console.error('Profile error:', profileErr);
-      showToast('Profile error: ' + profileErr.message);
-    }
-    
-    state.profile = profile;
-    // Load all profiles for name labels
-    const { data: all } = await sb.from('profiles').select('*');
+    // Load all profiles first
+    const { data: all, error: allErr } = await sb.from('profiles').select('*');
     state.profiles = {};
     (all || []).forEach(p => {
       state.profiles[p.role] = p;
       state.profiles[p.id]   = p;
     });
+
+    // Find my profile by user id
+    let profile = (all || []).find(p => p.id === state.user.id) || null;
+
+    if (!profile) {
+      // First login: ask for name and create via RPC
+      const name = prompt('Welcome to Owed!\nWhat is your name?')?.trim() || 'User';
+      const { data: created, error: profileErr } = await sb.rpc('get_or_create_profile', {
+        user_id: state.user.id,
+        user_name: name,
+      });
+      if (profileErr) {
+        console.error('Profile error:', profileErr);
+        showToast('Profile error: ' + profileErr.message);
+      } else {
+        profile = created;
+        // Reload all profiles to include new one
+        const { data: refreshed } = await sb.from('profiles').select('*');
+        state.profiles = {};
+        (refreshed || []).forEach(p => {
+          state.profiles[p.role] = p;
+          state.profiles[p.id]   = p;
+        });
+      }
+    }
+
+    state.profile = profile;
     await loadData();
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
@@ -407,8 +418,16 @@ function simulateAllocation(amount, payer) {
 
 // ── Labels ────────────────────────────────────────────────────
 function getUserLabel(role) {
-  if (role === 'user1') return state.profiles['user']?.name  || 'User 1';
-  if (role === 'user2') return state.profiles['admin']?.name || 'User 2';
+  // user1 = debtor (role='user' in profiles = Ingmar)
+  // user2 = creditor (role='admin' in profiles = Nadia)
+  if (role === 'user1') {
+    const p = Object.values(state.profiles).find(p => p.role === 'user');
+    return p?.name || 'User 1';
+  }
+  if (role === 'user2') {
+    const p = Object.values(state.profiles).find(p => p.role === 'admin');
+    return p?.name || 'User 2';
+  }
   return role || 'Unknown';
 }
 function debtorLabel(debt) { return `${getUserLabel(debt.debtor)} → ${getUserLabel(debt.creditor)}`; }
@@ -753,13 +772,20 @@ async function submitDebt() {
   const appliesInterest = debtor==='user1';
   const debtAmount = split==='split' ? Math.round(amount/2*100)/100 : amount;
   document.getElementById('add-debt-btn').textContent = 'Adding…';
+  const createdBy = state.user?.id;
+  if (!createdBy) { showToast('Not logged in'); return; }
   const {data,error} = await sb.from('debts').insert({
-    created_by: state.user?.id || state.profile?.id, debtor, creditor,
+    created_by: createdBy, debtor, creditor,
     description: desc, amount: debtAmount, original_amount: amount, split_type: split,
     interest_rate: appliesInterest?rate:0, applies_interest: appliesInterest,
     date, recurring: recurring||null, is_template: !!recurring, notes: notes||null,
   }).select().single();
-  if (error) { showToast('Error: '+error.message); document.getElementById('add-debt-btn').textContent='Add debt'; return; }
+  if (error) {
+    console.error('Debt insert error:', error);
+    showToast('Error: '+error.message);
+    document.getElementById('add-debt-btn').textContent='Add debt';
+    return;
+  }
   closeModal(); await loadData(); showToast('Debt added ✓');
 }
 
@@ -811,7 +837,7 @@ async function submitPayment() {
   if (amount<=0) return showToast('Amount must be greater than 0');
   document.getElementById('add-payment-btn').textContent = 'Saving…';
   const {allocations} = simulateAllocation(amount,payer);
-  const {data:pd,error:pErr} = await sb.from('payments').insert({ created_by:state.profile?.role||'user', payer, amount, date, notes:notes||null }).select().single();
+  const {data:pd,error:pErr} = await sb.from('payments').insert({ created_by:state.user?.id, payer, amount, date, notes:notes||null }).select().single();
   if (pErr) { showToast('Error: '+pErr.message); document.getElementById('add-payment-btn').textContent='Confirm payment'; return; }
   if (allocations.length) {
     await sb.from('payment_allocations').insert(allocations.map(a=>({ payment_id:pd.id, debt_id:a.debt.id, interest_paid:a.interestPaid, capital_paid:a.capitalPaid })));
