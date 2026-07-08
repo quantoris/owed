@@ -313,18 +313,16 @@ async function bootApp() {
   try {
     // Load or create profile
     // Load all profiles first
-    const { data: all, error: allErr } = await sb.from('profiles').select('*');
-    state.profiles = {};
-    (all || []).forEach(p => {
-      state.profiles[p.role] = p;
-      state.profiles[p.id]   = p;
-    });
+    const { data: all } = await sb.from('profiles').select('*');
+    let profiles = all || [];
 
     // Find my profile by user id
-    let profile = (all || []).find(p => p.id === state.user.id) || null;
+    let profile = profiles.find(p => p.id === state.user.id) || null;
 
     if (!profile) {
-      // First login: ask for name and create via RPC
+      // First login: determine role by whether another admin exists
+      const hasAdmin = profiles.some(p => p.role === 'admin');
+      const role = hasAdmin ? 'user' : 'admin'; // first to login becomes admin
       const name = prompt('Welcome to Owed!\nWhat is your name?')?.trim() || 'User';
       const { data: created, error: profileErr } = await sb.rpc('get_or_create_profile', {
         user_id: state.user.id,
@@ -334,18 +332,24 @@ async function bootApp() {
         console.error('Profile error:', profileErr);
         showToast('Profile error: ' + profileErr.message);
       } else {
+        // Update role if needed
+        if (created && created.role !== role) {
+          await sb.from('profiles').update({ role }).eq('id', state.user.id);
+          created.role = role;
+        }
         profile = created;
-        // Reload all profiles to include new one
+        // Reload profiles
         const { data: refreshed } = await sb.from('profiles').select('*');
-        state.profiles = {};
-        (refreshed || []).forEach(p => {
-          state.profiles[p.role] = p;
-          state.profiles[p.id]   = p;
-        });
+        profiles = refreshed || [];
       }
     }
 
     state.profile = profile;
+    state.profiles = {};
+    profiles.forEach(p => {
+      state.profiles[p.role] = p;
+      state.profiles[p.id]   = p;
+    });
     await loadData();
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
@@ -759,34 +763,62 @@ function setRecurrence(val) {
   document.getElementById('rec-hint').textContent = hints[val];
 }
 async function submitDebt() {
-  const desc = document.getElementById('d-desc').value.trim();
-  const amount = parseFloat(document.getElementById('d-amount').value);
-  const date = document.getElementById('d-date').value;
-  const rate = parseFloat(document.getElementById('d-rate')?.value||6)/100;
-  const notes = document.getElementById('d-notes').value.trim();
-  const {debtor, split, recurring} = window._debtForm;
-  if (!desc||!amount||!date) return showToast('Please fill in all fields');
-  if (amount<=0) return showToast('Amount must be greater than 0');
-  if (rate<0||rate>1) return showToast('Interest rate must be between 0% and 100%');
-  const creditor = debtor==='user1'?'user2':'user1';
-  const appliesInterest = debtor==='user1';
-  const debtAmount = split==='split' ? Math.round(amount/2*100)/100 : amount;
-  document.getElementById('add-debt-btn').textContent = 'Adding…';
-  const createdBy = state.user?.id;
-  if (!createdBy) { showToast('Not logged in'); return; }
-  const {data,error} = await sb.from('debts').insert({
-    created_by: createdBy, debtor, creditor,
-    description: desc, amount: debtAmount, original_amount: amount, split_type: split,
-    interest_rate: appliesInterest?rate:0, applies_interest: appliesInterest,
-    date, recurring: recurring||null, is_template: !!recurring, notes: notes||null,
-  }).select().single();
-  if (error) {
-    console.error('Debt insert error:', error);
-    showToast('Error: '+error.message);
-    document.getElementById('add-debt-btn').textContent='Add debt';
-    return;
+  try {
+    const desc = document.getElementById('d-desc')?.value?.trim() || '';
+    const amountRaw = document.getElementById('d-amount')?.value || '';
+    const amount = parseFloat(amountRaw);
+    const date = document.getElementById('d-date')?.value || '';
+    const rate = parseFloat(document.getElementById('d-rate')?.value || 6) / 100;
+    const notes = document.getElementById('d-notes')?.value?.trim() || '';
+    const form = window._debtForm || { debtor:'user1', split:'full', recurring:null };
+    const { debtor, split, recurring } = form;
+
+    if (!desc) { showToast('Please enter a description'); return; }
+    if (!amount || amount <= 0) { showToast('Please enter a valid amount'); return; }
+    if (!date) { showToast('Please select a date'); return; }
+
+    const creditor = debtor === 'user1' ? 'user2' : 'user1';
+    const appliesInterest = debtor === 'user1';
+    const debtAmount = split === 'split' ? Math.round(amount / 2 * 100) / 100 : amount;
+    const createdBy = state.user?.id;
+
+    if (!createdBy) { showToast('Not logged in – please refresh'); return; }
+
+    const btn = document.getElementById('add-debt-btn');
+    if (btn) btn.textContent = 'Adding…';
+
+    const { data, error } = await sb.from('debts').insert({
+      created_by: createdBy,
+      debtor,
+      creditor,
+      description: desc,
+      amount: debtAmount,
+      original_amount: amount,
+      split_type: split,
+      interest_rate: appliesInterest ? rate : 0,
+      applies_interest: appliesInterest,
+      date,
+      recurring: recurring || null,
+      is_template: !!recurring,
+      notes: notes || null,
+    }).select().single();
+
+    if (error) {
+      console.error('Debt insert error:', error);
+      showToast('Error adding debt: ' + error.message);
+      if (btn) btn.textContent = 'Add debt';
+      return;
+    }
+
+    closeModal();
+    await loadData();
+    showToast('Debt added successfully ✓');
+  } catch(e) {
+    console.error('submitDebt exception:', e);
+    showToast('Unexpected error: ' + e.message);
+    const btn = document.getElementById('add-debt-btn');
+    if (btn) btn.textContent = 'Add debt';
   }
-  closeModal(); await loadData(); showToast('Debt added ✓');
 }
 
 // ── Add payment modal ─────────────────────────────────────────
@@ -829,20 +861,59 @@ function updateAllocPreview() {
   </div>`;
 }
 async function submitPayment() {
-  const amount = parseFloat(document.getElementById('p-amount').value);
-  const date   = document.getElementById('p-date').value;
-  const notes  = document.getElementById('p-notes').value.trim();
-  const payer  = window._paymentForm?.payer||'user1';
-  if (!amount||!date) return showToast('Please fill in all fields');
-  if (amount<=0) return showToast('Amount must be greater than 0');
-  document.getElementById('add-payment-btn').textContent = 'Saving…';
-  const {allocations} = simulateAllocation(amount,payer);
-  const {data:pd,error:pErr} = await sb.from('payments').insert({ created_by:state.user?.id, payer, amount, date, notes:notes||null }).select().single();
-  if (pErr) { showToast('Error: '+pErr.message); document.getElementById('add-payment-btn').textContent='Confirm payment'; return; }
-  if (allocations.length) {
-    await sb.from('payment_allocations').insert(allocations.map(a=>({ payment_id:pd.id, debt_id:a.debt.id, interest_paid:a.interestPaid, capital_paid:a.capitalPaid })));
+  try {
+    const amount = parseFloat(document.getElementById('p-amount')?.value || 0);
+    const date   = document.getElementById('p-date')?.value || '';
+    const notes  = document.getElementById('p-notes')?.value?.trim() || '';
+    const payer  = window._paymentForm?.payer || 'user1';
+    const createdBy = state.user?.id;
+
+    if (!amount || amount <= 0) return showToast('Please enter a valid amount');
+    if (!date) return showToast('Please select a date');
+    if (!createdBy) return showToast('Not logged in – please refresh');
+
+    const isAdmin = state.profile?.role === 'admin';
+    const isUser  = state.profile?.role === 'user';
+    // Permission check: user can only record their own payments
+    if (isUser && payer !== 'user1') {
+      return showToast('You can only record your own payments');
+    }
+
+    const btn = document.getElementById('add-payment-btn');
+    if (btn) btn.textContent = 'Saving…';
+
+    const {allocations} = simulateAllocation(amount, payer);
+    const {data:pd, error:pErr} = await sb.from('payments').insert({
+      created_by: createdBy, payer, amount, date, notes: notes || null
+    }).select().single();
+
+    if (pErr) {
+      showToast('Error: ' + pErr.message);
+      if (btn) btn.textContent = 'Confirm payment';
+      return;
+    }
+
+    if (allocations.length) {
+      const {error:aErr} = await sb.from('payment_allocations').insert(
+        allocations.map(a => ({
+          payment_id: pd.id,
+          debt_id: a.debt.id,
+          interest_paid: a.interestPaid,
+          capital_paid: a.capitalPaid,
+        }))
+      );
+      if (aErr) console.error('Allocation error:', aErr);
+    }
+
+    closeModal();
+    await loadData();
+    showToast('Payment recorded ✓');
+  } catch(e) {
+    console.error('submitPayment exception:', e);
+    showToast('Unexpected error: ' + e.message);
+    const btn = document.getElementById('add-payment-btn');
+    if (btn) btn.textContent = 'Confirm payment';
   }
-  closeModal(); await loadData(); showToast('Payment recorded ✓');
 }
 
 // ── Delete ────────────────────────────────────────────────────
