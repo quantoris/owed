@@ -227,8 +227,20 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
 });
 
 // ── State ─────────────────────────────────────────────────────
+// Pre-load profiles from localStorage cache for instant name display
+const _cachedProfiles = (() => {
+  try {
+    const c = localStorage.getItem('owed_profiles');
+    if (!c) return {};
+    const arr = JSON.parse(c);
+    const obj = {};
+    arr.forEach(p => { obj[p.role] = p; obj[p.id] = p; });
+    return obj;
+  } catch(e) { return {}; }
+})();
+
 let state = {
-  user: null, profile: null, profiles: {},
+  user: null, profile: null, profiles: _cachedProfiles,
   debts: [], payments: [], allocations: [],
   _ready: false,
   dashView: 'month',
@@ -350,6 +362,10 @@ async function bootApp() {
       state.profiles[p.role] = p;
       state.profiles[p.id]   = p;
     });
+    // Backup to localStorage so names survive page reloads
+    if (profiles.length) {
+      localStorage.setItem('owed_profiles', JSON.stringify(profiles));
+    }
     await loadData();
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
@@ -422,14 +438,24 @@ function simulateAllocation(amount, payer) {
 
 // ── Labels ────────────────────────────────────────────────────
 function getUserLabel(role) {
-  // user1 = debtor (role='user' in profiles = Ingmar)
-  // user2 = creditor (role='admin' in profiles = Nadia)
+  // First try state.profiles (loaded from Supabase)
+  const stateProfiles = Object.values(state.profiles || {}).filter(p => p.id);
+  
+  // Fallback to localStorage cache
+  let allProfiles = stateProfiles;
+  if (!allProfiles.length) {
+    try {
+      const cached = localStorage.getItem('owed_profiles');
+      if (cached) allProfiles = JSON.parse(cached);
+    } catch(e) {}
+  }
+  
   if (role === 'user1') {
-    const p = Object.values(state.profiles).find(p => p.role === 'user');
+    const p = allProfiles.find(p => p.role === 'user');
     return p?.name || 'User 1';
   }
   if (role === 'user2') {
-    const p = Object.values(state.profiles).find(p => p.role === 'admin');
+    const p = allProfiles.find(p => p.role === 'admin');
     return p?.name || 'User 2';
   }
   return role || 'Unknown';
@@ -781,8 +807,13 @@ async function submitDebt() {
     const appliesInterest = debtor === 'user1';
     const debtAmount = split === 'split' ? Math.round(amount / 2 * 100) / 100 : amount;
     const createdBy = state.user?.id;
-
     if (!createdBy) { showToast('Not logged in – please refresh'); return; }
+    
+    // Ensure profile exists in DB before inserting debt
+    if (!state.profile) {
+      showToast('Profile not loaded – please refresh');
+      return;
+    }
 
     const btn = document.getElementById('add-debt-btn');
     if (btn) btn.textContent = 'Adding…';
